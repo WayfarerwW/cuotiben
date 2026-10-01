@@ -160,6 +160,7 @@ text
 - 题目创建时自动生成首条 review_record，`next_review_at = now() + 3天`
 - 每轮复习写入新记录，记录 `interval_index`（0~3）
 - 间隔序列默认 `[3, 7, 15, 30]` 天，存 settings，可配
+- 间隔序列必须严格递增，由 API 层校验
 - 首次复习起点默认 3 天（不用 1 天）
 - 待复习判断 `next_review_at <= now()`，服务端计算
 - 所有 datetime 用 `DateTime(timezone=True)`，API 用 ISO 8601 带时区
