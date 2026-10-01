@@ -407,6 +407,31 @@ POST	/questions/{id}/mastery	切换正误
 方法	路径	说明
 GET	/tags	全部
 GET	/tags/search?q=	联想
+
+返回结构：
+
+```
+GET /tags -> [
+  { "id": 1, "name": "极限", "question_count": 3 },
+  ...
+]
+```
+
+`GET /tags/search?q=` 返回同样的结构（`TagWithCount`），
+额外支持 `limit` 参数（默认 20，范围 1~100）。
+
+排序规则：
+- `question_count` 降序 —— 高频标签靠前
+- 数量相同时按 `name` 升序，保证顺序稳定可复现
+
+设计说明：
+- `question_count` 是**只读计算字段，不存表**。查询时 JOIN `question_tags`
+  聚合得出，且只统计**未软删除**的题目（已删除题目不应把计数撑高）。
+- 排序让高频标签靠前，服务于两处界面需求：
+  标签选择题的候选顺序、标签云的"高频标签"展示（见 ui-design 4.5 / 5.2）。
+- `GET /tags/search?q=` 的查询词先做与入库相同的归一化
+  （trim + 小写 + 全半角），否则输入全角「ＡＢＣ」搜不到已存的 `abc`。
+
 4.4 图片
 方法	路径	说明
 POST	/upload/image	上传压缩
