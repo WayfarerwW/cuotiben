@@ -312,6 +312,21 @@ def main() -> int:  # noqa: C901 - 线性用例清单，拆函数反而难读
     expect("含 ASCII 回退名", 'filename="cuotiben-export.pdf"' in cd)
     expect("中文已百分号编码", "%E9%94%99%E9%A2%98%E6%9C%AC" in cd)
 
+    # ---------------- export_records 不写入 ----------------
+    section("export_records 不写入（决策：暂不启用导出历史）")
+    from app.models.export_records import ExportRecord
+
+    before = db.query(ExportRecord).count()
+    export_service.export_pdf(
+        db, ExportPdfRequest(scope="folder", folder_id=subject.id,
+                             with_answer=False), now=now)
+    after = db.query(ExportRecord).count()
+    expect("导出后 export_records 行数不变", after == before, f"{before} -> {after}")
+    expect("表定义仍然存在（保留不删）",
+           ExportRecord.__tablename__ == "export_records")
+    expect("service 不再提供 record_export",
+           not hasattr(export_service, "record_export"))
+
     print("\n" + "-" * 74)
     print(f"合计 {OK + FAIL} 项，通过 {OK}，失败 {FAIL}")
     for name in FAILED:

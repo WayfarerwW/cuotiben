@@ -340,19 +340,9 @@ def export_pdf(
     )
 
 
-def record_export(
-    db: Session, result: ExportResult, *, file_path: str | None = None
-) -> None:
-    """写一条导出历史（requirements.md 3.9，可选）。
-
-    文件名本身不含磁盘路径时 file_path 记 null：这张表只是给自己回溯用的。
-    """
-    from ..models.export_records import ExportRecord
-
-    row = ExportRecord(
-        range_desc=result.range_desc,
-        question_count=result.question_count,
-        file_path=file_path,
-    )
-    db.add(row)
-    db.commit()
+# 导出历史（export_records）当前**不写入**：该表按 requirements.md 3.9 属可选，
+# 本版本不启用"导出历史"功能，导出只生成 PDF。
+# 表定义（models/export_records.py）与 ExportRecordOut 契约保留不删，
+# 等启用历史功能时再在这里补 write 逻辑，并在 routers/export.py 调用。
+# 之前确实实现过 record_export 并被 router 调用，按决策改为不写后已移除 ——
+# 留一段没人调用的写库代码比不留更容易让人误以为"历史已经在记了"。

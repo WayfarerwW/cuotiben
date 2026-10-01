@@ -63,20 +63,14 @@ def _content_disposition(filename: str) -> str:
 
 @router.post("/export/pdf")
 async def export_pdf(payload: ExportPdfRequest, db: Session = Depends(get_db)):
-    """导出 PDF，直接返回二进制流（不落盘）。"""
+    """导出 PDF，直接返回二进制流（不落盘）。
+
+    **不写 export_records**：那张表按需求 3.9 属可选，当前不启用"导出历史"，
+    所以只生成 PDF，不落历史记录。表的定义保留，等启用历史功能时再写入
+    （见 docs/requirements.md 3.9）。
+    """
     with _service_errors():
         result = await run_in_threadpool(export_service.export_pdf, db, payload)
-
-        # 记录导出历史（requirements 3.9，可选）。写在同一个线程池任务里，
-        # 保证"返回了 PDF"与"记录了历史"一致。
-        def _record() -> None:
-            try:
-                export_service.record_export(db, result)
-            except Exception:
-                # 历史记录失败不该让已经渲染好的 PDF 白做
-                db.rollback()
-
-        await run_in_threadpool(_record)
 
     return StreamingResponse(
         iter([result.pdf]),

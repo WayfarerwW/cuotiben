@@ -365,13 +365,16 @@ key	VARCHAR UNIQUE	配置项
 value	TEXT	值
 默认配置：intervals=[3,7,15,30]、backfill_limit=20、backfill_reset_days=14
 
-3.9 export_records（可选）
+3.9 export_records（可选，**当前不写入**）
 字段	类型	说明
 id	INTEGER PK	主键
 range_desc	VARCHAR	范围描述
 question_count	INTEGER	数量
 file_path	VARCHAR	文件路径
 created_at	DATETIME	导出时间
+
+表的定义保留，但**写入逻辑待导出历史功能启用时实现**：
+当前 `POST /export/pdf` 只生成 PDF、不落历史记录，也不提供 `GET` 接口。
 3.10 关键约束
 外键 ON DELETE CASCADE
 
