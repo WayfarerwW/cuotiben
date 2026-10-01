@@ -110,6 +110,19 @@ def first_interval_days(db: Session) -> int:
     return get_intervals(db)[0]
 
 
+def get_all_settings(db: Session) -> dict:
+    """一次性读出全部业务配置（requirements.md 4.8 GET /settings）。
+
+    缺失的 key 由各 getter 回退到默认值，因此整体不会被"库不完整"影响。
+    不在这里写库 —— 写入默认值是启动时的职责（ensure_default_settings）。
+    """
+    return {
+        KEY_INTERVALS: get_intervals(db),
+        KEY_BACKFILL_LIMIT: get_backfill_limit(db),
+        KEY_BACKFILL_RESET_DAYS: get_backfill_reset_days(db),
+    }
+
+
 def first_review_at(db: Session, *, now: datetime | None = None) -> datetime:
     """新建题目时首条 review_record 的 next_review_at。
 
