@@ -38,15 +38,25 @@ print("审计结果")
 print("=" * 78)
 
 # 1) 资源名复数检查
-# 真正的"资源名"单数形态。注意 review / upload / export 是**动作/功能命名空间**
-# （/review/today、/upload/image、/export/pdf），不是资源集合，不适用复数规则。
-SINGULARS = {"question", "folder", "tag", "note", "setting"}
+# 接口命名规范（AGENTS.md 3.5）：
+#   资源型接口用复数；动作型接口用动作命名空间。
+# 判断标准：操作实体集合 -> 复数；功能动作或视图 -> 动作命名空间。
+#
+# 动作命名空间的根段（保持单数，不适用复数规则）
+ACTION_ROOTS = {"review", "upload", "export", "sync", "health", "docs",
+                "openapi", "redoc"}
+
+# 真正的"资源名"：必须是复数形态。
+RESOURCE_SINGULARS = {"question", "folder", "tag", "note", "setting"}
 problems = []
 
 for m, p, _ in rows:
     segments = [s for s in p.strip("/").split("/") if s and not s.startswith("{")]
+    if segments and segments[0] in ACTION_ROOTS:
+        # 动作命名空间：整条路径按动作处理，不参与复数规则
+        continue
     for seg in segments:
-        if seg in SINGULARS:
+        if seg in RESOURCE_SINGULARS:
             problems.append(f"资源名单数: {m} {p}（'{seg}' 应为复数）")
 
 # 2) 路径参数命名统计

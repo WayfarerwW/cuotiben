@@ -394,6 +394,13 @@ POST	/questions/{id}/mastery	切换正误
 - `/upload/image`、`/export/pdf`：`upload` / `export` 是动作命名空间
 - `/settings`：单复数同形，无需处理
 
+命名规范（详见 AGENTS.md 3.5）：
+- **资源型接口用复数**：`/questions`、`/folders`、`/tags`、`/notes`、`/settings`
+- **动作型接口用动作命名空间**：`/review/*`、`/upload/*`、`/export/*`、`/sync/*`
+- 判断标准：操作实体集合 -> 复数；功能动作或视图 -> 动作命名空间。
+  `/review/today` 返回的是**待复习题目列表**而非 review_records 集合，
+  写成 `/reviews/today` 反而语义错误，故保持单数。
+
 `/review/{id}` 的 `{id}` 存在语义歧义（是题目 id 还是 review_record id），
 实现 4.5 时需明确为题目 id 并改名为 `{question_id}`，避免前端误传。
 4.3 标签
