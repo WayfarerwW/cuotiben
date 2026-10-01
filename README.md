@@ -17,6 +17,27 @@
 | PDF 导出 | WeasyPrint + Jinja2 |
 | 启动 | uvicorn，浏览器访问 `http://localhost:8000` |
 
+## 第三方依赖
+
+本项目要求**纯本地离线运行，不使用 CDN**。确需引入的第三方库一律 vendor 到
+`app/static/js/vendor/`（字体放 `fonts/`），随仓库一起分发，并在此登记。
+
+新增 vendor 库时按同样格式补一行，同时把 LICENSE 文件一并放进同目录。
+
+| 名称 | 版本 | 许可证 | 来源 | 本地路径 |
+|---|---|---|---|---|
+| Vue（`vue.global.prod.js`） | 3.5.43 | MIT | https://unpkg.com/vue@3.5.43/dist/vue.global.prod.js | `app/static/js/vendor/vue.global.prod.js` |
+| 思源黑体 / Noto Sans SC（`NotoSansSC-VF.ttf`） | 2.04 | SIL OFL 1.1 | Adobe 官方发布（Noto Sans SC 即思源黑体） | `fonts/NotoSansSC-VF.ttf` |
+
+许可证文件：
+
+- Vue：`app/static/js/vendor/vue.LICENSE.txt`
+- 思源黑体：`fonts/NotoSansSC-OFL.txt`（字体版权归 Adobe，
+  文件名与 name 表均记作 "Noto Sans SC"，即思源黑体的 Google 发行名）
+
+> 说明：UI 组件全部用原生 HTML + CSS 自建，未使用任何组件库
+> （见 AGENTS.md 3.2）。Vue 只作为响应式运行时被引入。
+
 ## 目录结构
 
 ```

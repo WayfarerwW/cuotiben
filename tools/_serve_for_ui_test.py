@@ -1,7 +1,22 @@
 """UI 验证用服务器：静态前端 + 后端 API + 测试页，同一 origin。
 
-单独起一个进程，避免 pytest/uvicorn 的启动方式干扰。
-用法：python tools/_serve_for_ui_test.py <port> <harness.html 的绝对路径> [db path]
+*** 这是测试脚手架，不是生产入口。***
+
+生产启动方式是 `python run.py`（它调用 `app/main.py`，由后者挂载
+`/static` 与 `/uploads` 并提供根路径）。本文件之所以存在，是因为
+`tools/verify_ui.py` 需要在**同一个 origin** 下同时访问前端页面、后端 API
+与注入的测试页 —— 跨 origin（file:// 对 http://）时浏览器不允许脚本
+读取 iframe 内的 DOM，测试无法进行。
+
+因此本文件只做三件事：
+  1. 按前缀把请求分流给 FastAPI 或静态文件（等价于生产环境的同源部署）
+  2. 提供 `/__harness` 返回测试页
+  3. 提供 `/__redue`、`/__refill` 两个**仅测试用**接口，把复习记录的到期
+     时间回拨/重造（时间无法通过接口伪造，只能直接改临时库）
+
+它不会写入 data/cuotiben.db —— 库路径由调用方以参数传入临时文件。
+
+用法：python tools/_serve_for_ui_test.py <port> <harness.html 路径> [db 路径]
 """
 
 import os
