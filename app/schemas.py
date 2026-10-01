@@ -354,23 +354,33 @@ class ReviewTodayOut(BaseModel):
 
 
 class BackfillResetRequest(BaseModel):
-    """POST /review/backfill/reset —— 一键重置积压。
+    """POST /review/backfill/reset —— 一键重置积压（requirements.md 2.12）。
 
-    方式一 spread=False：全部重置到第一阶段
-    方式二 spread=True ：分散重置到未来 N 天
+    逾期 >= backfill_reset_days（默认 14 天）的题，interval_index 归零。
+
+    - spread=False（默认）：全部重置到第一阶段，next_review_at = now() + 3 天
+    - spread=True：分散重置到未来 N 天，避免积压题同日涌入队列；
+      days 未传时取 settings.backfill_reset_days（默认 14）
     """
 
-    reset_days: int | None = Field(default=None, ge=1, le=365)
     spread: bool = False
+    days: int | None = Field(default=None, ge=1, le=365,
+                            description="分散模式的天数窗口，仅在 spread=true 时生效")
 
 
 class BackfillResetResult(BaseModel):
-    reset_count: int = 0
+    """重置结果。affected_count 是受影响题目数。"""
+
+    affected_count: int = 0
     affected_question_ids: list[int] = Field(default_factory=list)
+    mode: str = "all"
+    spread_days: int | None = None
+    first_due_at: datetime | None = None
+    last_due_at: datetime | None = None
 
 
 class BackfillStatsOut(BaseModel):
-    """GET /review/backfill/stats。"""
+    """GET /review/backfill/stats —— 补卡统计（requirements.md 2.12）。"""
 
     today_backfill_count: int = 0
     consecutive_days: int = 0

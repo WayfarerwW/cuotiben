@@ -189,11 +189,15 @@ def check(
     *,
     mastery: int | None = None,
     now: datetime | None = None,
+    tz: ZoneInfo | timezone | None = None,
 ) -> ReviewRecord:
     """打勾：任何题、任何时间都能打，不校验待复习状态，允许重复打。
 
     每次打勾**新增一条** review_record（不改旧记录），interval_index 重置为 0，
     next_review_at = now() + INTERVALS[0]，review_count 在上一轮基础上 +1。
+
+    若该题当前记录已逾期（next_review_at 早于本地今日 0 点），本次打勾记为补卡
+    （is_backfill=True），供"今日补卡数量 / 连续补卡天数"统计使用。
     """
     _get_question(db, question_id)
     moment = now or utcnow()
@@ -202,6 +206,13 @@ def check(
     intervals = settings_service.get_intervals(db)
     index = _resolve_interval_index(mastery)
 
+    day_start, _day_end = today_bounds(moment, tz)
+    was_overdue = (
+        previous is not None
+        and previous.next_review_at is not None
+        and previous.next_review_at < day_start
+    )
+
     record = ReviewRecord(
         question_id=question_id,
         review_count=(previous.review_count if previous else 0) + 1,
@@ -209,6 +220,7 @@ def check(
         last_review_at=moment,
         next_review_at=moment + timedelta(days=intervals[index]),
         mastery_level=mastery if mastery is not None else 0,
+        is_backfill=was_overdue,
     )
     db.add(record)
     db.commit()
@@ -379,22 +391,205 @@ def count_due(
     return len(items)
 
 
-def stats(db: Session, *, now: datetime | None = None) -> dict:
-    """补卡统计（requirements.md 2.12）：今日补卡数、积压题数。"""
+def backlog_question_ids(
+    db: Session, *, now: datetime | None = None,
+    tz: ZoneInfo | timezone | None = None,
+) -> list[int]:
+    """逾期 >= BACKLOG_DAYS 天的题目 id（"积压区"里的题）。
+
+    判定基于每题"当前生效记录"的 next_review_at，与今日队列同口径。
+    """
     moment = now or utcnow()
-    start, end = today_bounds(moment)
+    day_start, day_end = today_bounds(moment, tz)
+    rows = _due_rows(db, until=day_end)
+    threshold = day_start - timedelta(days=BACKLOG_DAYS)
+    return [
+        question.id
+        for question, record in rows
+        if record.next_review_at is not None and record.next_review_at <= threshold
+    ]
 
-    today_checked = db.scalar(
-        select(func.count(ReviewRecord.id)).where(
-            ReviewRecord.deleted_at.is_(None),
-            ReviewRecord.last_review_at.is_not(None),
-            ReviewRecord.last_review_at >= start,
-            ReviewRecord.last_review_at < end,
+
+@dataclass
+class BackfillResetResult:
+    """一键重置积压的结果。"""
+
+    affected_count: int
+    affected_question_ids: list[int]
+    mode: str
+    spread_days: int | None = None
+    first_due_at: datetime | None = None
+    last_due_at: datetime | None = None
+
+
+def reset_backlog(
+    db: Session,
+    *,
+    spread: bool = False,
+    spread_days: int | None = None,
+    now: datetime | None = None,
+    tz: ZoneInfo | timezone | None = None,
+) -> BackfillResetResult:
+    """一键重置积压（requirements.md 2.12）。
+
+    目标：逾期 >= BACKLOG_DAYS（默认 14 天）的题，interval_index 归零。
+
+    两种方式：
+      - spread=False（默认）：全部重置到第一阶段 ——
+        所有目标题的 interval_index=0，next_review_at = now() + INTERVALS[0]，
+        即立刻回到常规复习节奏。
+      - spread=True：分散重置到未来 N 天 ——
+        同样 interval_index=0，但把 next_review_at 按天错开到
+        [now, now + N 天] 区间内，避免积压题在同一天全部涌进今日队列。
+        N 取 spread_days，未传则用 settings.backfill_reset_days（默认 14）。
+
+    实现方式：**修改当前生效记录**而不是新增打勾记录 —— 这是"重新排期"，
+    用户并没有复习这道题。同时把该记录标记 is_backfill=True 并刷新
+    last_review_at，使"今日补卡数量 / 连续补卡天数"统计能算上这次重置。
+    """
+    moment = now or utcnow()
+    intervals = settings_service.get_intervals(db)
+    base_days = intervals[0]
+
+    wanted = backlog_question_ids(db, now=moment, tz=tz)
+    if not wanted:
+        return BackfillResetResult(affected_count=0, affected_question_ids=[],
+                                   mode="spread" if spread else "all")
+
+    if spread:
+        days = spread_days if spread_days is not None else (
+            settings_service.get_backfill_reset_days(db)
         )
-    ) or 0
+        days = max(1, int(days))
+    else:
+        days = 0
 
-    _items, meta = list_today(db, now=moment)
+    # 保持队列顺序（重点优先 + 逾期最久）：错开时重点题排在更近的日期
+    day_start, day_end = today_bounds(moment, tz)
+    ordered: list[tuple[datetime, int]] = []
+    for question, record in _due_rows(db, until=day_end):
+        if question.id not in wanted or record.next_review_at is None:
+            continue
+        overdue_days = int((day_start - record.next_review_at).days)
+        ordered.append((record.next_review_at, question.id, question.is_starred,
+                        overdue_days))  # type: ignore[arg-type]
+    ordered.sort(key=lambda t: (not t[2], -t[3], t[1]))
+    ordered_ids = [t[1] for t in ordered]
+
+    offsets: dict[int, int] = {}
+    total = len(ordered_ids)
+    for index, question_id in enumerate(ordered_ids):
+        if days <= 0:
+            offsets[question_id] = 0
+        else:
+            # 均分到 [0, days] 天：第一题今天，最后一题落在 days 天后
+            offsets[question_id] = 0 if total <= 1 else round(index * days / (total - 1))
+
+    target_ids = ordered_ids or wanted
+    records = {
+        r.question_id: r
+        for r in db.scalars(
+            select(ReviewRecord).where(
+                ReviewRecord.question_id.in_(target_ids),
+                ReviewRecord.deleted_at.is_(None),
+            )
+            .order_by(ReviewRecord.created_at, ReviewRecord.id)
+        ).all()
+    }
+    # 同一题可能有多条未删除记录，只取最新那条（与 current_record 同口径）
+    latest: dict[int, ReviewRecord] = {}
+    for r in records.values():
+        current = latest.get(r.question_id)
+        if current is None or (r.created_at, r.id) > (current.created_at, current.id):
+            latest[r.question_id] = r
+
+    affected: list[int] = []
+    due_times: list[datetime] = []
+    for question_id in target_ids:
+        record = latest.get(question_id)
+        if record is None:
+            continue
+        offset = offsets.get(question_id, 0)
+        record.interval_index = 0
+        record.next_review_at = moment + timedelta(days=base_days + offset)
+        record.last_review_at = moment
+        record.is_backfill = True
+        affected.append(question_id)
+        due_times.append(record.next_review_at)
+
+    db.commit()
+    return BackfillResetResult(
+        affected_count=len(affected),
+        affected_question_ids=affected,
+        mode="spread" if spread else "all",
+        spread_days=days if spread else None,
+        first_due_at=min(due_times) if due_times else None,
+        last_due_at=max(due_times) if due_times else None,
+    )
+
+
+# --------------------------------------------------------------------------
+# 补卡统计（requirements.md 2.12）
+# --------------------------------------------------------------------------
+
+
+def _count_backfill_records(db: Session, day_start: datetime, day_end: datetime) -> int:
+    """某一天内的补卡次数（以 last_review_at 落在该天为准）。"""
+    return int(
+        db.scalar(
+            select(func.count(ReviewRecord.id)).where(
+                ReviewRecord.deleted_at.is_(None),
+                ReviewRecord.is_backfill.is_(True),
+                ReviewRecord.last_review_at.is_not(None),
+                ReviewRecord.last_review_at >= day_start,
+                ReviewRecord.last_review_at < day_end,
+            )
+        ) or 0
+    )
+
+
+def _consecutive_backfill_days(
+    db: Session, *, now: datetime, tz: ZoneInfo | timezone | None = None,
+    lookback: int = 365,
+) -> int:
+    """连续补卡天数：从今天往前数，连续多少天每天至少有一次补卡。
+
+    今天还没补卡时从昨天起算（否则每天早上打开应用都会看到连续天数被清零，
+    不符合"连续"的直觉）。
+    """
+    zone = tz or local_timezone()
+    if _count_backfill_records(db, *today_bounds(now, zone)):
+        cursor_date = now.astimezone(zone).date()
+    else:
+        # 今天还没补卡，从昨天起算
+        cursor_date = now.astimezone(zone).date() - timedelta(days=1)
+
+    streak = 0
+    for _ in range(lookback):
+        start = datetime.combine(cursor_date, time.min, tzinfo=zone).astimezone(UTC)
+        end = datetime.combine(
+            cursor_date + timedelta(days=1), time.min, tzinfo=zone
+        ).astimezone(UTC)
+        if _count_backfill_records(db, start, end) <= 0:
+            break
+        streak += 1
+        cursor_date -= timedelta(days=1)
+    return streak
+
+
+def stats(
+    db: Session, *, now: datetime | None = None, tz: ZoneInfo | timezone | None = None
+) -> dict:
+    """补卡统计（requirements.md 2.12 / 4.5 GET /review/backfill/stats）。
+
+    - today_backfill_count：今日补卡数量（今天打勾且当时已逾期，或今日被重置积压）
+    - consecutive_days：连续补卡天数
+    - backlog_count：当前仍处于积压区（逾期 >=14 天）的题目数
+    """
+    moment = now or utcnow()
+    start, end = today_bounds(moment, tz)
     return {
-        "today_backfill_count": int(today_checked),
-        "backlog_count": int(meta["overdue_total"]),
+        "today_backfill_count": _count_backfill_records(db, start, end),
+        "consecutive_days": _consecutive_backfill_days(db, now=moment, tz=tz),
+        "backlog_count": len(backlog_question_ids(db, now=moment, tz=tz)),
     }

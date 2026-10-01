@@ -331,11 +331,262 @@ def main() -> int:
             # ============ 8. 补卡统计 ============
             print("\n-- 补卡统计 --")
             st = rsvc.stats(db, now=base)
-            check("stats 含今日补卡数与积压数",
-                  "today_backfill_count" in st and "backlog_count" in st,
+            check("stats 含今日补卡数 / 连续天数 / 积压数",
+                  {"today_backfill_count", "consecutive_days", "backlog_count"} <= set(st),
                   str(st))
+            check("stats.backlog_count 与 backlog_question_ids 一致",
+                  st["backlog_count"] == len(
+                      rsvc.backlog_question_ids(db, now=base)),
+                  str(st["backlog_count"]))
 
         engine.dispose()
+
+    # ============ 9. 补卡：排序、重置、统计 ============
+    # 独立一段干净数据，避免上面已软删除/已打勾的题干扰。
+    # 不重新 import/reload 模块，而是显式拿一个指向新库的 engine 与会话，
+    # 这样各 service 仍用同一套模块级函数，行为与生产一致。
+    # ignore_cleanup_errors：Windows 下连接池可能仍持有 db 文件句柄，
+    # 临时目录删除会 PermissionError；不影响测试结论。
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp2:
+        from sqlalchemy.orm import Session as _Session
+
+        from app.database import Base
+        from app.database import create_db_engine as _create_engine
+        from app.services import folder_service as fsvc2
+        from app.services import question_service as qsvc2
+        from app.services import review_service as rsvc2
+        from app.services import settings_service as ss2
+
+        engine2 = _create_engine(f"sqlite:///{(Path(tmp2) / 'backfill.db').as_posix()}")
+        Base.metadata.create_all(bind=engine2)
+        Sess = lambda: _Session(bind=engine2)  # noqa: E731
+
+        with Sess() as db:
+            ss2.ensure_default_settings(db)
+            subj = fsvc2.create_folder(db, "数学")
+            cat = fsvc2.create_folder(db, "极限", parent_id=subj.id)
+            base2 = datetime(2026, 6, 10, 4, 0, tzinfo=UTC)
+            day_start2, _ = rsvc2.today_bounds(base2)
+
+            def mk2(stem: str, days_overdue: int, starred: bool) -> int:
+                q = qsvc2.create_question(db, folder_id=cat.id, stem=stem,
+                                          is_starred=starred)
+                rec = rsvc2.current_record(db, q.id)
+                assert rec is not None
+                rec.next_review_at = day_start2 - timedelta(days=days_overdue)
+                db.commit()
+                return q.id
+
+            # ---------- 9.1 逾期排序：is_starred DESC, 逾期天数 DESC ----------
+            print("\n-- 逾期题排序（重点优先 + 逾期最久）--")
+            # 故意让 id 升序与逾期降序错开，以暴露"靠 id 兜底"的错误实现
+            a = mk2("A 逾期30 非重点", 30, False)
+            b = mk2("B 逾期20 重点", 20, True)
+            c = mk2("C 逾期10 非重点", 10, False)
+            d = mk2("D 逾期5 重点", 5, True)
+
+            items, meta = rsvc2.list_today(db, now=base2)
+            order = [(i.stem, i.overdue_days, i.is_starred) for i in items]
+            check("逾期排序 = 重点优先，其次逾期最久",
+                  [i.question_id for i in items] == [b, d, a, c],
+                  f"{order}")
+            check("重点题内部的相对顺序也按逾期降序",
+                  order[0][1] == 20 and order[1][1] == 5, f"{order[:2]}")
+            check("非重点内部按逾期降序",
+                  order[2][1] == 30 and order[3][1] == 10, f"{order[2:]}")
+            check("backfill_limit 从 settings 读取，默认 20",
+                  meta["backfill_limit"] == 20, str(meta["backfill_limit"]))
+
+            # ---------- 9.2 补卡标记 ----------
+            print("\n-- 补卡标记 is_backfill --")
+            rec_b = rsvc2.current_record(db, b)
+            check("逾期题尚未打勾前不算补卡",
+                  rec_b is not None and rec_b.is_backfill is False)
+            rsvc2.check(db, b, now=base2)
+            check("对逾期题打勾记为补卡",
+                  rsvc2.current_record(db, b).is_backfill is True)
+
+            # 未逾期的题打勾不算补卡
+            fresh = qsvc2.create_question(db, folder_id=cat.id, stem="新题")
+            rsvc2.check(db, fresh.id, now=base2)
+            check("未逾期题打勾不算补卡",
+                  rsvc2.current_record(db, fresh.id).is_backfill is False)
+            check("今日补卡数量只算补卡",
+                  rsvc2.stats(db, now=base2)["today_backfill_count"] == 1,
+                  str(rsvc2.stats(db, now=base2)["today_backfill_count"]))
+
+            # ---------- 9.3 一键重置：全部重置 ----------
+            print("\n-- 一键重置积压（全部重置）--")
+            before_backlog = rsvc2.backlog_question_ids(db, now=base2)
+            # 此刻只有 A 仍是积压题：B 已在 9.2 被打勾，next_review_at 推到 now+3 天，
+            # 自然脱离积压区。这正好顺带验证"打勾后不再算积压"。
+            check("积压题 = 逾期 >=14 天（A30；B 已打勾脱离积压）",
+                  before_backlog == [a], f"{before_backlog}")
+
+            res = rsvc2.reset_backlog(db, now=base2)
+            check("affected_count 等于积压题数",
+                  res.affected_count == len(before_backlog) == 1,
+                  f"affected={res.affected_count} 积压题={before_backlog}")
+            check("mode=all", res.mode == "all", res.mode)
+            for qid in before_backlog:
+                rec = rsvc2.current_record(db, qid)
+                check(f"题 {qid} interval_index 归零", rec.interval_index == 0,
+                      str(rec.interval_index))
+                delta = (rec.next_review_at - base2).total_seconds() / 86400
+                check(f"题 {qid} next_review_at = now()+3 天",
+                      abs(delta - 3) < 0.01, f"{delta:.4f} 天")
+                check(f"题 {qid} 重置记为补卡", rec.is_backfill is True)
+            check("重置后不再有积压题",
+                  rsvc2.backlog_question_ids(db, now=base2) == [],
+                  str(rsvc2.backlog_question_ids(db, now=base2)))
+            check("重置不新增记录（是重新排期而非打勾）",
+                  db.query(ReviewRecord).filter_by(question_id=a).count() == 1,
+                  "A 仍是 1 条记录")
+
+            # ---------- 9.4 一键重置：分散到未来 N 天 ----------
+            print("\n-- 一键重置积压（分散到未来 N 天）--")
+            # 重新造 5 道积压题（逾期 15~19 天）
+            spread_ids = [mk2(f"积压{i}", 15 + i, False) for i in range(5)]
+            check("5 道题都进入积压区",
+                  set(rsvc2.backlog_question_ids(db, now=base2)) == set(spread_ids),
+                  str(len(rsvc2.backlog_question_ids(db, now=base2))))
+
+            res2 = rsvc2.reset_backlog(db, spread=True, spread_days=4, now=base2)
+            check("mode=spread 且 spread_days 回显",
+                  res2.mode == "spread" and res2.spread_days == 4,
+                  f"{res2.mode}/{res2.spread_days}")
+            check("affected_count=5", res2.affected_count == 5, str(res2.affected_count))
+
+            dues = []
+            for qid in spread_ids:
+                rec = rsvc2.current_record(db, qid)
+                dues.append((rec.next_review_at - base2).total_seconds() / 86400)
+            dues_sorted = sorted(dues)
+            check("分散后到期时间互不相同（错开而非同一天）",
+                  len(set(round(x, 4) for x in dues)) == len(dues),
+                  f"{[round(x, 2) for x in dues_sorted]}")
+            check("分散窗口落在 [3, 3+4] 天内（base 3 天 + 0~4 天错开）",
+                  abs(dues_sorted[0] - 3) < 0.01 and abs(dues_sorted[-1] - 7) < 0.01,
+                  f"最早 {dues_sorted[0]:.2f} 天，最晚 {dues_sorted[-1]:.2f} 天")
+            check("所有分散题 interval_index 均为 0",
+                  all(rsvc2.current_record(db, q).interval_index == 0
+                      for q in spread_ids))
+            check("分散后不再有积压题",
+                  rsvc2.backlog_question_ids(db, now=base2) == [])
+
+            # 默认窗口取 settings.backfill_reset_days
+            ss2.update_settings(db, backfill_reset_days=6)
+            more = [mk2(f"再积压{i}", 20 + i, False) for i in range(3)]
+            res3 = rsvc2.reset_backlog(db, spread=True, now=base2)
+            check("spread 未传 days 时取 settings.backfill_reset_days=6",
+                  res3.spread_days == 6, str(res3.spread_days))
+            d3 = sorted(
+                (rsvc2.current_record(db, q).next_review_at - base2).total_seconds() / 86400
+                for q in more
+            )
+            check("默认窗口下最晚落在 3+6=9 天",
+                  abs(d3[-1] - 9) < 0.01, f"{[round(x, 2) for x in d3]}")
+
+            # ---------- 9.5 无积压时的重置 ----------
+            print("\n-- 无积压时的重置 --")
+            res_empty = rsvc2.reset_backlog(db, now=base2)
+            check("无积压题时 affected_count=0 且不报错",
+                  res_empty.affected_count == 0 and res_empty.affected_question_ids == [],
+                  f"affected={res_empty.affected_count}")
+
+            # ---------- 9.6 连续补卡天数（用独立库，数据完全可控）----------
+            # 上面的库里已有大量"今天"产生的补卡记录，无法精确构造断档场景，
+            # 所以单独开一个干净库，只插入我指定的补卡记录。
+            print("\n-- 连续补卡天数 --")
+
+        engine2.dispose()
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp3:
+        from sqlalchemy.orm import Session as _S3
+
+        from app.database import Base as _Base3
+        from app.database import create_db_engine as _create3
+        from app.services import review_service as rsvc3
+        from app.services import settings_service as ss3
+
+        engine3 = _create3(f"sqlite:///{(Path(tmp3) / 'streak.db').as_posix()}")
+        _Base3.metadata.create_all(bind=engine3)
+        Sess3 = lambda: _S3(bind=engine3)  # noqa: E731
+
+        base3 = datetime(2026, 6, 10, 4, 0, tzinfo=UTC)  # 本地 12:00
+
+        with Sess3() as db:
+            ss3.ensure_default_settings(db)
+            from app.models import Question
+            from app.services import folder_service as fsvc3
+
+            # questions.folder_id 有外键约束，必须先建真实的文件夹
+            subj3 = fsvc3.create_folder(db, "数学")
+            cat3 = fsvc3.create_folder(db, "极限", parent_id=subj3.id)
+
+            q = Question(folder_id=cat3.id, stem="连续天数测试")
+            db.add(q)
+            db.commit()
+
+            def backfill_at(days_before: int) -> None:
+                """插入一条 is_backfill 记录，last_review_at 落在 N 天前。"""
+                moment = base3 - timedelta(days=days_before)
+                rec = rsvc3.current_record(db, q.id)
+                if rec is None:
+                    rsvc3.create_initial_record(db, q.id)
+                    db.commit()
+                    rec = rsvc3.current_record(db, q.id)
+                rec.is_backfill = True
+                rec.last_review_at = moment
+                db.commit()
+                # 下一次插入需要新记录，否则会覆盖同一条
+                rsvc3.create_initial_record(db, q.id)
+                db.commit()
+
+            # 没有任何补卡
+            st = rsvc3.stats(db, now=base3)
+            check("无补卡记录 -> 今日补卡数 0、连续 0",
+                  st["today_backfill_count"] == 0 and st["consecutive_days"] == 0,
+                  str(st))
+
+            # 只有今天补卡
+            backfill_at(0)
+            st = rsvc3.stats(db, now=base3)
+            check("仅今天补卡 -> 今日 1、连续 1",
+                  st["today_backfill_count"] == 1 and st["consecutive_days"] == 1,
+                  str(st))
+
+            # 昨天也补卡 -> 连续 2
+            backfill_at(1)
+            st = rsvc3.stats(db, now=base3)
+            check("昨天也补卡 -> 连续 2",
+                  st["consecutive_days"] == 2, str(st["consecutive_days"]))
+
+            # 前天也补卡 -> 连续 3
+            backfill_at(2)
+            st = rsvc3.stats(db, now=base3)
+            check("前天也补卡 -> 连续 3",
+                  st["consecutive_days"] == 3, str(st["consecutive_days"]))
+
+            # 大前天断档（不插），再往前插一条 -> 连续仍应为 3
+            backfill_at(4)
+            st = rsvc3.stats(db, now=base3)
+            check("中间断档则停止累计（仍为 3）",
+                  st["consecutive_days"] == 3, str(st["consecutive_days"]))
+
+            # 今天没补卡（把今天那条挪到 10 天前）-> 从昨天起算，连续 2
+            today_rec = db.query(type(rec)).filter(
+                type(rec).question_id == q.id,
+                type(rec).is_backfill.is_(True),
+            ).order_by(type(rec).id).first()
+            today_rec.last_review_at = base3 - timedelta(days=10)
+            db.commit()
+            st = rsvc3.stats(db, now=base3)
+            check("今天无补卡时从昨天起算（连得上昨天/前天 -> 2）",
+                  st["today_backfill_count"] == 0 and st["consecutive_days"] == 2,
+                  f"today={st['today_backfill_count']} streak={st['consecutive_days']}")
+
+        engine3.dispose()
 
     print("-" * 80)
     failed = [r for r in results if not r[1]]

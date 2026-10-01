@@ -42,7 +42,9 @@ def main() -> int:
     print("数据库层 + Pydantic schema 自检")
     print("=" * 80)
 
-    with tempfile.TemporaryDirectory() as tmp:
+    # ignore_cleanup_errors：Windows 下连接池可能仍持有 db 文件句柄，
+    # 临时目录删除会 PermissionError；不影响测试结论。
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         db_file = Path(tmp) / "verify.db"
         # 必须在 import app.main 之前设好，让全局 engine 指向临时库
         os.environ["CUOTIBEN_DATABASE_URL"] = f"sqlite:///{db_file.as_posix()}"
@@ -233,9 +235,12 @@ def main() -> int:
         cnt = ReviewCountOut(count=3)
         check("ReviewCountOut 只回 count（前端现有契约）", cnt.count == 3, f"{cnt.model_dump()}")
 
-        req = BackfillResetRequest(reset_days=14, spread=True)
+        req = BackfillResetRequest(days=14, spread=True)
         check("BackfillResetRequest 默认/显式值正确",
-              req.reset_days == 14 and req.spread is True)
+              req.days == 14 and req.spread is True)
+        check("BackfillResetRequest 默认 spread=False、days 为空",
+              BackfillResetRequest().spread is False
+              and BackfillResetRequest().days is None)
 
         note = NoteCreate(title="备忘", content="复习洛必达")
         check("NoteCreate 可空字段可用", note.question_id is None)

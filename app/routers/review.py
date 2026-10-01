@@ -19,6 +19,9 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..schemas import (
+    BackfillResetRequest,
+    BackfillResetResult,
+    BackfillStatsOut,
     MessageOut,
     ReviewCheckRequest,
     ReviewItemOut,
@@ -50,6 +53,37 @@ def get_today(db: Session = Depends(get_db)) -> list[ReviewItemOut]:
 def get_count(db: Session = Depends(get_db)) -> dict:
     """铃铛角标用。返回 {"count": N}（与 list_today 同口径）。"""
     return {"count": review_service.count_due(db)}
+
+
+@router.post("/backfill/reset", response_model=BackfillResetResult,
+             summary="一键重置积压（逾期 ≥14 天）")
+def reset_backfill(
+    payload: BackfillResetRequest | None = None,
+    db: Session = Depends(get_db),
+) -> BackfillResetResult:
+    """把逾期 >=14 天的题的 interval_index 归零。
+
+    两种方式（requirements.md 2.12）：
+      - 不传 body 或 spread=false：全部重置到第一阶段，next_review_at = now()+3 天
+      - spread=true, days=N：分散重置到未来 N 天，避免同日涌入队列
+    """
+    spread = bool(payload.spread) if payload is not None else False
+    days = payload.days if payload is not None else None
+    result = review_service.reset_backlog(db, spread=spread, spread_days=days)
+    return BackfillResetResult(
+        affected_count=result.affected_count,
+        affected_question_ids=result.affected_question_ids,
+        mode=result.mode,
+        spread_days=result.spread_days,
+        first_due_at=result.first_due_at,
+        last_due_at=result.last_due_at,
+    )
+
+
+@router.get("/backfill/stats", response_model=BackfillStatsOut, summary="补卡统计")
+def get_backfill_stats(db: Session = Depends(get_db)) -> BackfillStatsOut:
+    """今日补卡数量、连续补卡天数、当前积压题数。"""
+    return BackfillStatsOut.model_validate(review_service.stats(db))
 
 
 @router.post("/{question_id}/check", response_model=ReviewRecordOut,

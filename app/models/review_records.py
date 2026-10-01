@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Index, Integer
+from sqlalchemy import Boolean, Index, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import (
@@ -48,6 +48,12 @@ class ReviewRecord(PKMixin, CreatedAtMixin, SoftDeleteMixin, Base):
     next_review_at: Mapped[datetime | None] = utc_datetime_column(nullable=True)
     # mastery_level: 0/1/2/3，见 requirements.md 5.1 推进规则
     mastery_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 本次是否属于"补卡"（题目当时已逾期，或由一键重置积压产生）。
+    # 需求 2.12 要统计"今日补卡数量、连续补卡天数"。若靠"回看上一条记录的
+    # next_review_at"反推，在记录被撤销/软删除后会算错，所以打勾时就固化下来。
+    is_backfill: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
 
     question: Mapped["Question"] = relationship(back_populates="review_records")
 

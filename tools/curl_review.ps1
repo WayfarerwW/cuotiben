@@ -284,6 +284,125 @@ try {
     Assert "撤销后回到队列（上一轮自动生效）" ($backIds -contains $q_ov1) `
         "count=$($backIds.Count)"
 
+    # ---------- 补卡统计 ----------
+    Write-Host ""
+    Write-Host "=== 补卡统计 ===" -ForegroundColor Yellow
+    # 造一道确定逾期的题并打勾，避免依赖前面已被撤销的题：
+    # 撤销会软删除那条补卡记录，统计按软删除语义本就该排除它（正确行为）。
+    $r = Invoke-Json 'POST' "$base/questions" ('{"folder_id":' + $cat + ',"stem":"补卡统计用题"}')
+    $q_stat = (Json $r.body).id
+    Set-Overdue $q_stat 20
+
+    $statsBefore2 = Json (Invoke-Curl @("$base/review/backfill/stats")).body
+    Assert "stats 含 today_backfill_count / consecutive_days / backlog_count" (
+        (@($statsBefore2.PSObject.Properties.Name) -contains 'today_backfill_count') -and
+        (@($statsBefore2.PSObject.Properties.Name) -contains 'consecutive_days') -and
+        (@($statsBefore2.PSObject.Properties.Name) -contains 'backlog_count')) `
+        "字段=$(@($statsBefore2.PSObject.Properties.Name) -join ',')"
+
+    Invoke-Json 'POST' "$base/review/$q_stat/check" '{}' | Out-Null
+    $r = Invoke-Curl @("$base/review/backfill/stats")
+    Show "14. GET /review/backfill/stats（补卡后）" $r '200'
+    $st = Json $r.body
+    Assert "对逾期题打勾后今日补卡数增加" `
+        ($st.today_backfill_count -gt $statsBefore2.today_backfill_count) `
+        "$($statsBefore2.today_backfill_count) -> $($st.today_backfill_count)"
+    Assert "连续补卡天数 = 1（只有今天）" ($st.consecutive_days -eq 1) `
+        "consecutive_days=$($st.consecutive_days)"
+
+    # 撤销该次补卡后，统计应排除它（软删除语义）
+    Invoke-Curl @('-X', 'POST', "$base/review/$q_stat/uncheck") | Out-Null
+    $stAfterUncheck = Json (Invoke-Curl @("$base/review/backfill/stats")).body
+    Assert "撤销补卡后今日补卡数回落（软删除即不计）" `
+        ($stAfterUncheck.today_backfill_count -lt $st.today_backfill_count) `
+        "$($st.today_backfill_count) -> $($stAfterUncheck.today_backfill_count)"
+
+    # ---------- 一键重置积压：全部重置 ----------
+    Write-Host ""
+    Write-Host "=== 一键重置积压 ===" -ForegroundColor Yellow
+    # 先补足积压题：再建两道逾期 20 天
+    $r = Invoke-Json 'POST' "$base/questions" ('{"folder_id":' + $cat + ',"stem":"积压A","is_starred":true}')
+    $bg1 = (Json $r.body).id
+    $r = Invoke-Json 'POST' "$base/questions" ('{"folder_id":' + $cat + ',"stem":"积压B"}')
+    $bg2 = (Json $r.body).id
+    Set-Overdue $bg1 20
+    Set-Overdue $bg2 25
+
+    $statsBefore = Json (Invoke-Curl @("$base/review/backfill/stats")).body
+    Assert "重置前积压数 >= 3（ov20/ov30 仍在积压）" `
+        ($statsBefore.backlog_count -ge 3) "backlog_count=$($statsBefore.backlog_count)"
+
+    $r = Invoke-Curl @('-X', 'POST', "$base/review/backfill/reset")
+    Show "15. POST /review/backfill/reset（全部重置，无 body）" $r '200'
+    $reset = Json $r.body
+    Assert "返回 affected_count" (@($reset.PSObject.Properties.Name) -contains 'affected_count') `
+        "affected_count=$($reset.affected_count)"
+    Assert "affected_count = 重置前积压数" `
+        ($reset.affected_count -eq $statsBefore.backlog_count) `
+        "$($reset.affected_count) vs $($statsBefore.backlog_count)"
+    Assert "mode=all" ($reset.mode -eq 'all') "mode=$($reset.mode)"
+
+    $statsAfter = Json (Invoke-Curl @("$base/review/backfill/stats")).body
+    Assert "重置后积压数归零" ($statsAfter.backlog_count -eq 0) `
+        "backlog_count=$($statsAfter.backlog_count)"
+    Assert "重置计入今日补卡数" `
+        ($statsAfter.today_backfill_count -gt $statsBefore.today_backfill_count) `
+        "$($statsBefore.today_backfill_count) -> $($statsAfter.today_backfill_count)"
+
+    # 逐题核对 interval_index 与 next_review_at
+    $detailBg = Json (Invoke-Curl @("$base/questions/$bg1")).body
+    Assert "重置后 interval_index=0" ($detailBg.interval_index -eq 0) `
+        "interval_index=$($detailBg.interval_index)"
+    $bgDue = [datetime]::Parse($detailBg.next_review_at).ToUniversalTime()
+    $bgDays = ($bgDue - [datetime]::UtcNow).TotalDays
+    Assert "重置后 next_review_at = now()+3 天" ($bgDays -gt 2.95 -and $bgDays -lt 3.05) `
+        ("{0:N4} 天" -f $bgDays)
+
+    # ---------- 一键重置积压：分散到未来 N 天 ----------
+    Write-Host ""
+    Write-Host "=== 分散重置到未来 N 天 ===" -ForegroundColor Yellow
+    $spreadIds = @()
+    for ($i = 0; $i -lt 4; $i++) {
+        $r = Invoke-Json 'POST' "$base/questions" ('{"folder_id":' + $cat + ',"stem":"分散' + $i + '"}')
+        $qid = (Json $r.body).id
+        Set-Overdue $qid (20 + $i)
+        $spreadIds += $qid
+    }
+    Assert "已造 4 道积压题" ($spreadIds.Count -eq 4) "ids=$($spreadIds -join ',')"
+
+    $r = Invoke-Json 'POST' "$base/review/backfill/reset" '{"spread":true,"days":3}'
+    Show "16. POST /review/backfill/reset（spread=true, days=3）" $r '200'
+    $reset2 = Json $r.body
+    Assert "mode=spread 且 days 回显" `
+        (($reset2.mode -eq 'spread') -and ($reset2.spread_days -eq 3)) `
+        "mode=$($reset2.mode) days=$($reset2.spread_days)"
+    Assert "affected_count=4" ($reset2.affected_count -eq 4) "affected=$($reset2.affected_count)"
+
+    $offsets = @()
+    foreach ($qid in $spreadIds) {
+        $dd = Json (Invoke-Curl @("$base/questions/$qid")).body
+        $dDays = ([datetime]::Parse($dd.next_review_at).ToUniversalTime() -
+                  [datetime]::UtcNow).TotalDays
+        $offsets += [math]::Round($dDays, 3)
+    }
+    $offsets = $offsets | Sort-Object
+    Assert "分散后到期时间互不相同" `
+        ((@($offsets | Select-Object -Unique)).Count -eq 4) "offsets=$($offsets -join ',')"
+    Assert "分散窗口落在 3~6 天内（base 3 + 0~3 天错开）" `
+        (($offsets[0] -gt 2.9) -and ($offsets[-1] -lt 6.1)) "最早=$($offsets[0]) 最晚=$($offsets[-1])"
+
+    Assert "重置后积压数归零" `
+        ((Json (Invoke-Curl @("$base/review/backfill/stats")).body).backlog_count -eq 0) "0"
+
+    # 无积压时重置不报错
+    $r = Invoke-Curl @('-X', 'POST', "$base/review/backfill/reset")
+    Show "17. 无积压时重置（应 200 且 affected_count=0）" $r '200'
+    Assert "affected_count=0" ((Json $r.body).affected_count -eq 0) `
+        "affected=$((Json $r.body).affected_count)"
+
+    # days 越界 -> 422
+    Show "18. days=0 越界 -> 422" (Invoke-Json 'POST' "$base/review/backfill/reset" '{"spread":true,"days":0}') '422'
+
 } finally {
     if ($proc -and -not $proc.HasExited) { $proc.Kill() }
     Write-Host ""

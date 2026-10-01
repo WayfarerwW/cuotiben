@@ -110,7 +110,7 @@ python tools/verify_softdelete.py      # 软删除与部分唯一索引
 python tools/verify_folders_service.py # folders 业务逻辑（两级结构、同名、级联软删除）
 python tools/verify_questions_service.py # questions 业务逻辑（标签归一化、筛选、首条复习记录）
 python tools/verify_image_service.py   # 图片压缩（1080px/JPEG q75/≤300KB）、上传接口、静态挂载
-python tools/verify_review_service.py  # 复习：首条记录、打勾重置、撤销、今日边界、补卡
+python tools/verify_review_service.py  # 复习：首条记录、打勾重置、撤销、今日边界、补卡与重置积压
 python tools/verify_font.py            # 中文 PDF 渲染与字体嵌入
 python tools/verify_heic.py            # HEIC 读写与图片压缩管线
 python tools/audit_routes.py           # 接口命名一致性审计（对照需求第 4 节与代码实际路由）

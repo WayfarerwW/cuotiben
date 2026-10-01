@@ -80,7 +80,7 @@ EXPECTED_COLUMNS: dict[str, set[str]] = {
     "question_tags": {"question_id", "tag_id"},
     "review_records": {"id", "question_id", "review_count", "interval_index",
                        "last_review_at", "next_review_at", "mastery_level",
-                       "created_at", "deleted_at"},
+                       "is_backfill", "created_at", "deleted_at"},
     "notes": {"id", "title", "content", "question_id", "created_at", "updated_at",
               "deleted_at"},
     "settings": {"id", "key", "value"},
