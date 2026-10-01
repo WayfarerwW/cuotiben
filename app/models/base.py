@@ -26,8 +26,25 @@ from typing import Any
 
 from sqlalchemy import ForeignKey, Integer, String
 from sqlalchemy.engine import Dialect
-from sqlalchemy.orm import DeclarativeBase, Mapped, MappedColumn, mapped_column
+from sqlalchemy.orm import Mapped, MappedColumn, mapped_column
 from sqlalchemy.types import TypeDecorator
+
+# Base 定义在 app.database（与 engine / SessionLocal 放一起），这里转出，
+# 使 `from app.models.base import Base` 与 `from app.models import Base` 都可用。
+# 注意：app.database 不 import app.models，所以不存在循环导入。
+from ..database import Base
+
+__all__ = [
+    "Base",
+    "CreatedAtMixin",
+    "PKMixin",
+    "SoftDeleteMixin",
+    "UTCDateTime",
+    "UpdatedAtMixin",
+    "fk_cascade",
+    "utc_datetime_column",
+    "utcnow",
+]
 
 
 def utcnow() -> datetime:
@@ -72,10 +89,6 @@ class UTCDateTime(TypeDecorator):
             return value if value.tzinfo else value.replace(tzinfo=UTC)
         dt = datetime.fromisoformat(str(value))
         return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
-
-
-class Base(DeclarativeBase):
-    """所有 ORM 模型的声明式基类。"""
 
 
 class PKMixin:

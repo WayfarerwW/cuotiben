@@ -104,8 +104,11 @@ python run.py
 ### 环境自检
 
 ```bash
-python tools/verify_font.py    # 验证中文 PDF 渲染与字体嵌入
-python tools/verify_heic.py    # 验证 HEIC 读写与图片压缩管线
+python tools/verify_db_schemas.py   # 数据库连接、建表、settings 默认值、Pydantic schema
+python tools/verify_models.py       # ORM 表结构、外键级联、datetime 往返
+python tools/verify_softdelete.py   # 软删除与部分唯一索引
+python tools/verify_font.py         # 中文 PDF 渲染与字体嵌入
+python tools/verify_heic.py         # HEIC 读写与图片压缩管线
 ```
 
 ## 文档
