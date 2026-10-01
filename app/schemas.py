@@ -568,3 +568,33 @@ class SettingsUpdate(BaseModel):
         if any(b <= a for a, b in pairwise(v)):
             raise ValueError("intervals 必须严格递增")
         return v
+
+
+# --------------------------------------------------------------------------
+# 数据说明页（requirements.md 2.17）
+# --------------------------------------------------------------------------
+
+
+class DataPathsOut(BaseModel):
+    """GET /data/paths —— 页面要展示的路径与实际存在性。
+
+    路径由服务端用**当前生效**的配置解析（CUOTIBEN_DATABASE_URL 可覆盖），
+    不是把 2.17 里写的字面值硬编码回去 —— 否则用户会照着页面去备份一个空文件。
+    """
+
+    db_path: str
+    db_exists: bool
+    uploads_path: str
+    uploads_exists: bool
+    uploads_file_count: int
+    backups_path: str
+    backups_exists: bool
+
+
+class BackupResultOut(BaseModel):
+    """POST /data/backup 的响应。"""
+
+    backup_dir: str
+    db_bytes: int
+    image_count: int
+    created_at: datetime

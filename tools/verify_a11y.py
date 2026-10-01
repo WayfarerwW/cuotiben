@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -34,10 +35,41 @@ EDGE = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
 
 PROBE = r"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"></head><body>
 <script>
+/* 兜底：任何未捕获错误都直接写进结果节点（不走 JSON），
+   否则探针一挂就只看到一个空节点，完全不知道错在哪。 */
+window.addEventListener('error', function (e) {
+  var pre = document.getElementById('a11y-result');
+  if (!pre) {
+    pre = document.createElement('pre');
+    pre.id = 'a11y-result';
+    document.body.appendChild(pre);
+  }
+  pre.textContent = 'PROBE_ERROR: ' + (e.message || '')
+    + ' @line ' + (e.lineno || '?');
+});
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
 async function until(fn, ms) {
   const end = Date.now() + (ms || 15000);
   while (Date.now() < end) { try { const v = fn(); if (v) return v; } catch(e){} await wait(150); }
+  return null;
+}
+/* 按**真实时间**轮询。
+   wait()/until() 走 setTimeout，会被 --virtual-time-budget 瞬间快进 ——
+   用它去等一个真实 HTTP 响应（备份接口）会永远等不到，只能靠把预算调大，
+   而预算一大又会和 Vue 的动画帧互相拖累（实测墙钟 10~25 分钟仍不收敛）。
+   fetch 一次 /health 是按墙钟完成的，天然不消耗虚拟时间，拿它当"睡 100ms"。 */
+async function realWait(ms) {
+  const rounds = Math.max(1, Math.ceil((ms || 100) / 100));
+  for (let i = 0; i < rounds; i++) {
+    try { await fetch('/health', { cache: 'no-store' }); } catch (e) { /* 忽略 */ }
+  }
+}
+async function realWaitFor(fn, seconds) {
+  const end = Date.now() + (seconds || 10) * 1000;   // Date.now() 是真实时间
+  while (Date.now() < end) {
+    try { const v = fn(); if (v) return v; } catch (e) { /* 忽略 */ }
+    await realWait(150);
+  }
   return null;
 }
 const results = [];
@@ -77,15 +109,14 @@ function blob(el) {
   };
   f.addEventListener('load', hook);
   const bulk = /[?&]bulk=1/.test(location.search);
-  f.src = '__BASE__/?t=' + Date.now() + (bulk ? '&bulk=1' : '');
+  f.src = '__BASE__/?t=' + Date.now() + '&nopoll=1' + (bulk ? '&bulk=1' : '');
   hook();
   const d = await until(() => {
     const doc = f.contentDocument;
     if (!doc) return null;
     const el = doc.getElementById('app');
     return el && !el.hasAttribute('v-cloak') ? doc : null;
-  }, 20000);
-  if (!d) {
+  }, 12000);  if (!d) {
     c('应用挂载', false, '未挂载');
     document.body.insertAdjacentHTML('beforeend',
       '<pre id="a11y-result">' + JSON.stringify(results) + '</pre>');
@@ -93,6 +124,15 @@ function blob(el) {
   }
   const w = f.contentWindow;
   await wait(1800);
+
+  /* 接管 Vue 的 errorHandler 日志：app.js 的 app.config.errorHandler 会
+     console.error，若不断言就只能瞎猜"点了没反应"。 */
+  const vueErrors = [];
+  const origErr = w.console.error;
+  w.console.error = function () {
+    vueErrors.push(Array.from(arguments).map(String).join(' '));
+    return origErr.apply(w.console, arguments);
+  };
 
   /* bulk 模式只验"超过 500 题的分页警告"就收尾：
      警告是 loadQuestions() 在挂载时发出的，塞完题重新加载一次页面即可，
@@ -325,7 +365,7 @@ function blob(el) {
     if (firstItem) {
       firstItem.click();
       // 等复习视图真的渲染出来（.notif__review 是 v-if 控制的）
-      const review = await until(() => d.querySelector('.notif__review'), 6000);
+      const review = await until(() => d.querySelector('.notif__review'), 4000);
       c('点列表项后展开复习视图', !!review,
         review ? 'ok' : ('aria-current=' + firstItem.getAttribute('aria-current')));
       const checkBtn = Array.from(d.querySelectorAll('button'))
@@ -374,7 +414,7 @@ function blob(el) {
     .find(b => b.textContent.trim().includes('新增题目'))
     || d.querySelector('.topbar__actions .btn--primary');
   if (addBtn) { addBtn.click(); }
-  const tagInput = await until(() => d.getElementById('q-tags'), 6000);
+  const tagInput = await until(() => d.getElementById('q-tags'), 4000);
   c('题目编辑弹窗里有标签输入框', !!tagInput);
   c('标签输入框是 combobox 语义',
     !!tagInput && tagInput.getAttribute('role') === 'combobox',
@@ -400,7 +440,7 @@ function blob(el) {
       tagInput.value = text;
       tagInput.dispatchEvent(new Event('input', { bubbles: true }));
       // 等下拉真的打开（搜索是异步的）
-      return until(() => optionEls().length > 0, 6000);
+      return until(() => optionEls().length > 0, 4000);
     }
     function pressTag(k) {
       const ev = new KeyboardEvent('keydown',
@@ -520,13 +560,122 @@ function blob(el) {
     await wait(400);
   }
 
-  /* ============ 13. 题目数超阈值的分页提示 ============
+  /* ============ 13. 数据说明页（requirements 2.17）============ */
+  const navData = Array.from(d.querySelectorAll('.nav__item'))
+    .find(n => n.textContent.includes('数据'))
+    || null;
+  // 数据说明页在用户菜单里，不在侧边栏导航
+  const userMenuBtn = d.querySelector('.user-menu');
+  if (userMenuBtn) {
+    userMenuBtn.click();
+    await wait(600);
+    const entry = Array.from(d.querySelectorAll('#user-menu .dropdown__item'))
+      .find(el => el.textContent.includes('数据'));
+    if (entry) {
+      entry.click();
+      await wait(2000);
+    }
+  }
+  const dataCard = await until(
+    () => Array.from(d.querySelectorAll('.card'))
+      .find(c => c.textContent.includes('数据存放位置')), 5000);
+  c('能进入数据说明页', !!dataCard,
+    navData ? '侧边栏入口' : '用户菜单入口');
+
+  if (dataCard) {
+    const pageText = d.querySelector('.page')
+      ? d.querySelector('.page').textContent : '';
+    c('显示数据库路径', /数据库文件/.test(pageText));
+    c('显示图片路径', /图片目录/.test(pageText) && /uploads/.test(pageText));
+    c('显示备份路径', /备份目录/.test(pageText) && /backups/.test(pageText));
+    c('说明纯本地运行、数据保存在本机、不联网',
+      /纯本地运行/.test(pageText) && /不联网/.test(pageText));
+    c('数据库路径来自服务端解析（不是字面值 data/cuotiben.db）',
+      /verify|a11y|tmp|Temp/i.test(pageText) || !/data\/cuotiben\.db/.test(pageText),
+      (pageText.match(/[A-Za-z]:\\[^\s]*\.db/) || ['未显示绝对路径'])[0].slice(0, 60));
+
+    const backupBtn = Array.from(d.querySelectorAll('button'))
+      .find(b => b.textContent.trim() === '手动备份');
+    const jsonBtn = Array.from(d.querySelectorAll('button'))
+      .find(b => b.textContent.trim() === '导出 JSON');
+    c('有「手动备份」按钮', !!backupBtn);
+    c('有「导出 JSON」按钮', !!jsonBtn);
+
+    // 手动备份：重点断言"按钮在空闲态是**可点的**"，然后真点一次
+    if (backupBtn) {
+      /* 这条曾抓到一个真实缺陷：模板把**字符串**传给 `:disabled`
+         （busy 时是 'backup'、空闲时是 ''），而 Vue 3 的运行时把
+         `disabled=""` 当作**真**（源码 `e => e && (e.disabled || ""===e.disabled)`），
+         于是两个按钮在空闲态也是 disabled、点了完全没反应。
+         所以"空闲态不带 disabled 属性"是这里最关键的回归断言。 */
+      c('空闲态「手动备份」没有被禁用', backupBtn.disabled === false
+        && !backupBtn.hasAttribute('disabled'),
+        'disabled=' + backupBtn.disabled
+        + ' attr=' + JSON.stringify(backupBtn.getAttribute('disabled')));
+      c('空闲态「导出 JSON」没有被禁用',
+        !!jsonBtn && jsonBtn.disabled === false && !jsonBtn.hasAttribute('disabled'));
+
+      backupBtn.click();
+      /* 不再断言"能看到 busy 态"：备份只要几十毫秒，doBackup 的 then
+         跑完、dataBusy 已复位，而 Vue 的 DOM 更新在微任务里 ——
+         这个中途态基本不可观测。断言一个抓不住的瞬间态只会变成 flaky 测试。
+         真正的回归点是下面两条：结果提示出现、按钮**恢复可点**。 */
+
+      /* 等结果用**真实时间**：fetch 一次接口，它按墙钟完成，
+         不消耗 `--virtual-time-budget`。用 wait() 会被虚拟时间瞬间跳过，
+         再去等一个真实 HTTP 响应就永远等不到（这正是之前跑不完的原因）。 */
+      const msg = await realWaitFor(() => {
+        const el = d.querySelector('.data-message');
+        return el && el.textContent.trim() ? el : null;
+      }, 12);
+      c('点「手动备份」后有结果提示', !!msg,
+        msg ? JSON.stringify(msg.textContent.trim().slice(0, 60)) : '无提示');
+      c('备份成功提示里带备份目录',
+        !!msg && /备份完成/.test(msg.textContent) && /backups/.test(msg.textContent),
+        msg ? msg.textContent.trim().slice(0, 80) : '-');
+      c('备份提示不是错误样式',
+        !!msg && !msg.classList.contains('data-message--error'));
+
+      /* 按 class 找按钮，不要按文案找：完成前后文案会变
+         （'手动备份' <-> '备份中…'），按文案找会在错误的时机返回 null。 */
+      const restored = d.querySelector('.quick-actions .btn--primary');
+      c('备份结束后按钮恢复可点（busy 态清除）',
+        !!restored && restored.disabled === false
+        && !restored.hasAttribute('disabled'),
+        restored ? ('disabled=' + restored.disabled
+          + ' 文案=' + restored.textContent.trim().slice(0, 12)) : 'null');
+      c('没有 Vue 渲染错误', vueErrors.length === 0,
+        JSON.stringify(vueErrors.slice(0, 2)));
+    }
+
+    // 导出 JSON：断言点了不报错（下载落盘在浏览器里不好断言）
+    if (jsonBtn) {
+      // 先清掉上一条结果提示，否则下面"没有错误提示"可能落在旧节点上
+      const stale = d.querySelector('.data-message');
+      if (stale) { stale.textContent = ''; }
+      jsonBtn.click();
+      await realWaitFor(() => d.querySelector('.data-message--error'), 8);
+      const err = d.querySelector('.data-message--error');
+      c('点「导出 JSON」没有出现错误提示', !err,
+        err ? JSON.stringify(err.textContent.trim().slice(0, 60)) : '无错误');
+    }
+  }
+
+  /* ============ 14. 题目数超阈值的分页提示 ============
      在 Python 侧做第二遍（见 main()）：塞够 500+ 题后重新加载页面，
      用 ?bulk=1 让本探针只验警告。 */
 
   const pre = document.createElement('pre');
   pre.id = 'a11y-result';
-  pre.textContent = JSON.stringify(results);
+  /* 刻意不用 JSON.stringify 输出：探针里任何一处拿到不可序列化的值，
+     stringify 会抛错，结果节点变空、看不到已完成的断言。
+     逐行输出更稳。 */
+  pre.textContent = '[\n' + results.map(function (r) {
+    return '{"name":' + JSON.stringify(String(r.name))
+      + ',"ok":' + (r.ok ? 'true' : 'false')
+      + ',"detail":' + JSON.stringify(String(r.detail === undefined ? '' : r.detail))
+      + '}';
+  }).join(',\n') + '\n]';
   document.body.appendChild(pre);
 })().catch(err => {
   /* 探针抛错时也要把已有结果写出来，否则排错时只能看到一个空节点 */
@@ -534,7 +683,12 @@ function blob(el) {
                  detail: (err && err.message ? err.message : String(err)) });
   const pre = document.createElement('pre');
   pre.id = 'a11y-result';
-  pre.textContent = JSON.stringify(results);
+  pre.textContent = '[\n' + results.map(function (r) {
+    return '{"name":' + JSON.stringify(String(r.name))
+      + ',"ok":' + (r.ok ? 'true' : 'false')
+      + ',"detail":' + JSON.stringify(String(r.detail === undefined ? '' : r.detail))
+      + '}';
+  }).join(',\n') + '\n]';
   document.body.appendChild(pre);
 });
 </script></body></html>"""
@@ -622,7 +776,7 @@ def run_probe(harness: Path, extra_query: str = "") -> tuple[int, list[dict]]:
          "--force-device-scale-factor=1", "--window-size=1500,1000",
          "--virtual-time-budget=90000", "--dump-dom", url],
         capture_output=True, text=True, encoding="utf-8",
-        errors="replace", timeout=300).stdout or ""
+        errors="replace", timeout=900).stdout or ""
 
     # 测试页里可能有**多个** <pre id="a11y-result">（异常路径也插一个空的），
     # 所以要取最后一个非空的，不能用 re.search 拿第一个。
@@ -655,13 +809,21 @@ def main() -> int:
     harness = tmp / "a11y.html"
     harness.write_text(PROBE.replace("__BASE__", BASE), encoding="utf-8")
 
+    # 备份/图片目录指向临时目录：本脚本会**真的**点「手动备份」，
+    # 不隔离就会每跑一次往仓库 backups/ 里堆一份（实测堆到 16 份后
+    # 复制耗时把浏览器验证拖超时）。见 data_service 的 CUOTIBEN_*_DIR。
+    env = dict(os.environ)
+    env["CUOTIBEN_BACKUPS_DIR"] = str(tmp / "backups")
+    env["CUOTIBEN_UPLOADS_DIR"] = str(tmp / "uploads")
+    (tmp / "uploads").mkdir(parents=True, exist_ok=True)
+
     # 起一个与 verify_responsive 相同的测试服务器（用同一份 scaffolding）
     proc = subprocess.Popen(
         [sys.executable, "-c",
          "import runpy,sys; sys.argv=['x',%r,%r,%r]; "
          "runpy.run_path(r'tools/_serve_for_ui_test.py', run_name='__main__')"
          % (PORT, str(harness), str(tmp / "a11y.db"))],
-        cwd=".", stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        cwd=".", env=env, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
     try:
         ready = False
         for _ in range(60):
@@ -678,7 +840,6 @@ def main() -> int:
 
         n = seed()
         print(f"[seed] 已造 {n} 道题并回拨到期时间")
-
         code1, rows1 = run_probe(harness)
         if code1 != 0:
             return code1

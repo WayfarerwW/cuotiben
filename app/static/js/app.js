@@ -24,6 +24,17 @@
   var onUnmounted = Vue.onUnmounted;
   var nextTick = Vue.nextTick;
 
+  /**
+   * 是否禁用周期任务（通知轮询、草稿时间戳刷新）。
+   *
+   * 仅用于自动化测试：无头浏览器用 `--virtual-time-budget` 快进虚拟时间，
+   * 60s 轮询 / 5s 心跳会在预算内被触发很多次，把一次验证拖到几百秒（实测）。
+   * 关掉它们对被测的键盘/焦点行为没有任何影响；正常运行不受影响。
+   * 由测试页通过 ?nopoll=1 打开。
+   */
+  var DISABLE_POLLING = typeof location !== 'undefined'
+    && /[?&]nopoll=1/.test(location.search);
+
   /* ======================================================================
    * 常量
    * ==================================================================== */
@@ -142,6 +153,21 @@
       var tags = ref([]);
       var reviewQueue = ref([]);
       var health = ref({});
+      /** 数据说明页：服务端解析的路径与存在性（不是前端拼的）。 */
+      var dataPaths = ref({});
+      /**
+       * 是否有数据操作在进行中（**必须是布尔**）。
+       *
+       * 不能传字符串给 :disabled：Vue 3 的运行时把 disabled='' 视为**真**
+       * （源码：e => e && (e.disabled || '' === e.disabled)），于是
+       * :disabled="'"`（空串）会渲染出 disabled='' 并把按钮**永久禁用**。
+       * 实测症状：两个按钮都点不动、没有任何反应。
+       */
+      var dataBusy = ref(false);
+      /** 进行中的是哪个操作：'' | 'backup' | 'export'（只用于按钮文案）。 */
+      var dataBusyKind = ref('');
+      var dataMessage = ref('');
+      var dataError = ref('');
       var backfillStats = ref({ today_backfill_count: 0, consecutive_days: 0, backlog_count: 0 });
       var stats = ref({ total: 0, due: 0, mastered: 0, wrong: 0 });
       var reviewDoneToday = ref(0);
@@ -464,6 +490,66 @@
         return API.getHealth().then(function (h) { health.value = h || {}; });
       }
 
+      function loadDataPaths() {
+        return API.getDataPaths().then(function (p) {
+          dataPaths.value = p || {};
+        }).catch(function () {
+          // 取不到就退回 /health 里的 db_path（页面用 || 兜底），
+          // 不要因为这一个只读接口失败就让整页报错。
+          dataPaths.value = {};
+        });
+      }
+
+      /** 手动备份：数据库 + uploads/ 复制到 backups/<时间戳>/。 */
+      function doBackup() {
+        dataBusy.value = true;
+        dataBusyKind.value = 'backup';
+        dataMessage.value = '';
+        dataError.value = '';
+        API.createBackup()
+          .then(function (res) {
+            dataMessage.value = '备份完成：' + res.backup_dir
+              + '（数据库 ' + Math.max(1, Math.round(res.db_bytes / 1024)) + ' KB，'
+              + '图片 ' + res.image_count + ' 个）';
+            announce('备份完成');
+            toast('备份完成');
+            return loadDataPaths();
+          })
+          .catch(function (err) {
+            dataError.value = err && err.message ? err.message : '备份失败';
+            toastError(err);
+          })
+          .then(function () { dataBusy.value = false; dataBusyKind.value = ''; });
+      }
+
+      /** 导出全部业务数据为 JSON（前端触发下载）。 */
+      function doExportData() {
+        dataBusy.value = true;
+        dataBusyKind.value = 'export';
+        dataMessage.value = '';
+        dataError.value = '';
+        API.exportDataJson()
+          .then(function (res) {
+            var url = window.URL.createObjectURL(res.blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = res.filename || 'cuotiben-data.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+            dataMessage.value = '已开始下载 JSON。图片以路径引用，'
+              + '完整备份请用「手动备份」。';
+            announce('已开始下载 JSON');
+            toast('已开始下载 JSON');
+          })
+          .catch(function (err) {
+            dataError.value = err && err.message ? err.message : '导出失败';
+            toastError(err);
+          })
+          .then(function () { dataBusy.value = false; dataBusyKind.value = ''; });
+      }
+
       function loadSettings() {
         return API.getSettings().then(function (s) {
           if (!s) { return; }
@@ -510,7 +596,10 @@
         } else if (page === 'settings') {
           jobs.push(loadSettings());
         } else if (page === 'about-data') {
-          jobs.push(loadHealth());
+          // 复位上一次的备份/导出提示，避免残留上一条结果看起来像本次的
+          dataMessage.value = '';
+          dataError.value = '';
+          jobs.push(loadHealth(), loadDataPaths());
           loadDraftKeyList();
         }
         return Promise.all(jobs)
@@ -1560,11 +1649,13 @@
         window.addEventListener('resize', applyBreakpoint);
         applyBreakpoint();
         loadPage(currentPage.value);
-        // 通知每 60s 轮询（requirements 2.9 要求 30~60s）
-        pollTimer = window.setInterval(function () {
-          loadReview().then(recomputeStats).catch(function () { /* 静默 */ });
-        }, 60000);
-        savedAtTicker = window.setInterval(tickSavedAt, 5000);
+        if (!DISABLE_POLLING) {
+          // 通知每 60s 轮询（requirements 2.9 要求 30~60s）
+          pollTimer = window.setInterval(function () {
+            loadReview().then(recomputeStats).catch(function () { /* 静默 */ });
+          }, 60000);
+          savedAtTicker = window.setInterval(tickSavedAt, 5000);
+        }
         loadDraftKeyList();
       });
 
@@ -1598,6 +1689,13 @@
         stats: stats,
         backfillStats: backfillStats,
         health: health,
+        dataPaths: dataPaths,
+        dataBusy: dataBusy,
+        dataBusyKind: dataBusyKind,
+        dataMessage: dataMessage,
+        dataError: dataError,
+        doBackup: doBackup,
+        doExportData: doExportData,
         reviewDoneToday: reviewDoneToday,
         reviewPercent: reviewPercent,
         masteryRate: masteryRate,

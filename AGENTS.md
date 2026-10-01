@@ -67,6 +67,16 @@
     Esc 关浮层、Tab 锁焦点、←/→ 切题；输入框内不劫持按键。
     菜单内的 ↑/↓ 由 `onMenuKeydown` 就近处理（模板上绑 `@keydown`），
     它会 `stopPropagation`，避免和全局的 ←/→ 语义打架。
+- **Vue 的 `:disabled` 必须传布尔值，不能传字符串**：
+  Vue 3 运行时把 `disabled` 的**空字符串也当成真**
+  （源码 `e => e && (e.disabled || "" === e.disabled)`），
+  所以 `:disabled="someString"`（忙碌时 `'backup'`、空闲时 `''`）
+  会让按钮**永久禁用**、点了毫无反应。本项目的做法：
+  `dataBusy` 是布尔 ref，另外用 `dataBusyKind` 只负责按钮文案。
+- **无头浏览器验证要关掉周期任务**：`--virtual-time-budget` 会快进虚拟时间，
+  app 里的 60s 通知轮询 / 5s 心跳在预算内被触发很多次，能把一次验证从
+  几秒拖到几百秒。测试页用 `?nopoll=1` 让 app 跳过这两个 interval
+  （`app.js` 的 `DISABLE_POLLING`），对被测行为没有影响。
 - **题目列表筛选当前是客户端过滤，未做后端分页**：
   题目数 ≤ 500 时把全量题目拉到前端过滤；**超过 500 会在浏览器控制台
   打印一条警告**（`app.js` 的 `checkPaginationThreshold`，每会话只警告一次），

@@ -150,7 +150,7 @@ chmod +x start.sh
 ```bash
 python tools/verify_launch.py          # 启动可访问性：run.py 起服务、静态资源无 404、Vue 挂载
 python tools/verify_responsive.py      # 响应式：三个断点 + Esc/焦点移入（真浏览器）
-python tools/verify_a11y.py            # 可访问性：锁滚动/Tab 循环/焦点归还/下拉键盘
+python tools/verify_a11y.py            # 可访问性：锁滚动/Tab 循环/焦点归还/下拉与标签键盘/数据页
 python tools/check_contrast.py         # 对比度：文字×底色组合是否达 WCAG AA 4.5:1
 python tools/poc_weasyprint_cjk.py     # PDF 中文渲染 PoC（字体嵌入 + 中文可提取）
 python tools/verify_export.py          # PDF 导出：五个 scope、答案另起一页、不跨页
@@ -166,6 +166,7 @@ python tools/verify_review_service.py  # 复习：首条记录、打勾重置、
 python tools/verify_tags.py            # 标签：归一化、复用、联想、多标签 AND/OR、计数
 python tools/verify_notes.py           # 记事本：增删查改、软删除、标题/内容模糊搜索
 python tools/verify_settings.py        # 设置：默认值初始化、批量更新、校验、容错
+python tools/verify_data_service.py    # 数据说明页：路径解析、手动备份、导出 JSON
 python tools/verify_design_tokens.py   # 前端：style.css 与 UI 说明书的色彩/字体/间距/圆角/阴影/断点一致性
 python tools/verify_font.py            # 中文 PDF 渲染与字体嵌入
 python tools/verify_heic.py            # HEIC 读写与图片压缩管线

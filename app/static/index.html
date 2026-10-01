@@ -855,20 +855,59 @@
           <section class="card">
             <h2 class="section-title">数据存放位置</h2>
             <ul class="kv-list">
-              <li><span>数据库文件</span><span class="mono">{{ health.db_path || '—' }}</span></li>
-              <li><span>文件是否存在</span>
-                <span>{{ health.db_exists ? '是' : '否' }}</span></li>
+              <li><span>数据库文件</span>
+                <span class="mono">{{ dataPaths.db_path || health.db_path || 'data/cuotiben.db' }}</span></li>
+              <li><span>数据库是否存在</span>
+                <span>{{ (dataPaths.db_path ? dataPaths.db_exists : health.db_exists)
+                        ? '是' : '否' }}</span></li>
+              <li><span>图片目录</span>
+                <span class="mono">{{ dataPaths.uploads_path || 'uploads/' }}</span></li>
+              <li><span>图片数量</span>
+                <span class="num">{{ dataPaths.uploads_file_count || 0 }} 个文件</span></li>
+              <li><span>备份目录</span>
+                <span class="mono">{{ dataPaths.backups_path || 'backups/' }}</span></li>
               <li><span>服务状态</span><span>{{ health.status || '—' }}</span></li>
             </ul>
+            <p class="text-aux" style="margin-top: var(--sp-tight)">
+              路径由服务端按当前配置解析（可用环境变量
+              <code>CUOTIBEN_DATABASE_URL</code> 覆盖），因此这里显示的是
+              <strong>真正在用</strong>的文件，不是文档里的示例值。
+            </p>
+          </section>
+
+          <section class="card">
+            <h2 class="section-title">备份与导出</h2>
+            <div class="quick-actions">
+              <button class="btn btn--primary" type="button"
+                      :disabled="dataBusy" @click="doBackup">
+                <svg class="icon icon--sm"><use href="#i-check"></use></svg>
+                {{ dataBusyKind === 'backup' ? '备份中…' : '手动备份' }}
+              </button>
+              <button class="btn btn--secondary" type="button"
+                      :disabled="dataBusy" @click="doExportData">
+                <svg class="icon icon--sm"><use href="#i-plus"></use></svg>
+                {{ dataBusyKind === 'export' ? '导出中…' : '导出 JSON' }}
+              </button>
+            </div>
+            <p class="text-aux" style="margin-top: var(--sp-tight)">
+              「手动备份」把数据库与 <code>uploads/</code> 复制到
+              <code>backups/&lt;时间戳&gt;/</code>；「导出 JSON」只导出
+              业务数据（含题干、答案、标签、复习记录），图片以路径引用，
+              不含二进制。
+            </p>
+            <p v-if="dataMessage" role="status" class="data-message">{{ dataMessage }}</p>
+            <p v-if="dataError" role="alert" class="data-message data-message--error">
+              {{ dataError }}
+            </p>
           </section>
 
           <section class="card">
             <h2 class="section-title">说明</h2>
             <ul class="bullet-list">
-              <li>本应用<strong>纯本地单机运行</strong>，不联网、不上传任何数据。</li>
-              <li>无多用户、无登录鉴权；数据只保存在上面这个文件里。</li>
-              <li>图片存放在项目的 <code>uploads/</code> 目录，按年月日分片。</li>
-              <li>备份方式：直接复制数据库文件与 <code>uploads/</code> 目录即可。</li>
+              <li>本应用<strong>纯本地运行</strong>，不联网、不上传任何数据。</li>
+              <li>数据只保存在本机：数据库文件 + <code>uploads/</code> 图片目录。</li>
+              <li>无多用户、无登录鉴权，不存在账号与权限数据。</li>
+              <li>迁移方式：把 <code>data/</code>、<code>uploads/</code> 一起复制走即可。</li>
               <li>浏览器 localStorage 只保存未提交的表单草稿，不含业务数据。</li>
             </ul>
           </section>

@@ -449,6 +449,33 @@
     },
   };
 
+  /* ======================= 数据管理（requirements 2.17）======================= */
+
+  var dataApi = {
+    /**
+     * 数据路径与实际存在性：
+     * { db_path, db_exists, uploads_path, uploads_exists,
+     *   uploads_file_count, backups_path, backups_exists }
+     *
+     * 路径由**服务端**用当前生效的配置解析（CUOTIBEN_DATABASE_URL 可覆盖），
+     * 前端不要自己拼路径 —— 否则页面显示的可能是另一个文件。
+     */
+    getPaths: function (opts) {
+      return request('/data/paths', opts);
+    },
+    /**
+     * 手动备份：把数据库与 uploads/ 复制到 backups/<时间戳>/。
+     * 返回 { backup_dir, db_bytes, image_count, created_at }。
+     */
+    createBackup: function (opts) {
+      return request('/data/backup', Object.assign({ method: 'POST' }, opts));
+    },
+    /** 导出全部业务数据为 JSON，返回 { blob, filename }。 */
+    exportDataJson: function (opts) {
+      return request('/data/export', Object.assign({ responseType: 'blob' }, opts));
+    },
+  };
+
   /* ======================= 其它（未在本步要求内，按需使用）======================= */
 
   var misc = {
@@ -541,6 +568,10 @@
     updateSettings: settings.updateSettings,
 
     exportPDF: exportApi.exportPDF,
+
+    getDataPaths: dataApi.getPaths,
+    createBackup: dataApi.createBackup,
+    exportDataJson: dataApi.exportDataJson,
 
     getHealth: misc.getHealth,
     uploadImage: misc.uploadImage,

@@ -617,7 +617,39 @@ POST	/export/pdf	PDF 导出
 
 响应头另含 `X-Question-Count`（本次导出的题目数）。
 
-4.8 设置
+4.8 数据说明
+方法	路径	说明
+GET	/data/paths	数据路径与实际存在性
+
+`GET /data/paths` 响应字段：
+`db_path`、`db_exists`、`uploads_path`、`uploads_exists`、
+`uploads_file_count`、`backups_path`、`backups_exists`
+
+路径由**服务端按当前配置解析**（`CUOTIBEN_DATABASE_URL` 可覆盖），
+不是把 2.17 里写的字面值硬编码返回 —— 否则用户会照着页面去备份一个空文件。
+
+方法	路径	说明
+POST	/data/backup	手动备份（数据库 + uploads/ -> backups/<时间戳>/）
+
+`POST /data/backup` 响应字段：
+`backup_dir`、`db_bytes`、`image_count`、`created_at`
+
+数据库用 SQLite 的 `backup()` 做一致性快照（不直接拷 .db 文件：
+有未提交事务或 WAL 时可能拿到不一致的快照）。同一秒内重复备份
+自动加后缀，不覆盖已有备份。
+
+方法	路径	说明
+GET	/data/export	导出全部业务数据为 JSON
+
+`GET /data/export` 响应字段：
+`schema_version`、`exported_at`、`app`、`counts`、
+`folders`、`tags`、`questions`、`question_images`、
+`review_records`、`notes`、`settings`、`export_records`
+
+软删除的记录也会导出（带 `deleted_at`），否则还原时上下文会丢。
+图片只导出**引用路径**，不内联二进制。
+
+4.9 设置
 
 方法	路径	说明
 GET	/settings	获取
@@ -643,7 +675,7 @@ PUT	/settings	更新
 校验的是回退后的默认序列，而不是跳过校验。
 `intervals` 必须为 4 个正整数且严格递增（见 2.10），非法值 422。
 
-4.9 健康检查
+4.10 健康检查
 方法	路径	说明
 GET	/health	服务状态与数据库位置
 

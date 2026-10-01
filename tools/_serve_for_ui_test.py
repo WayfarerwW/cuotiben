@@ -41,7 +41,7 @@ def main() -> None:
     STATIC = ROOT / "app/static"
     API_PREFIXES = (
         "/folders", "/questions", "/review", "/tags", "/notes",
-        "/settings", "/upload", "/export", "/health",
+        "/settings", "/upload", "/export", "/data", "/health",
     )
     MIME = {
         ".html": "text/html; charset=utf-8",

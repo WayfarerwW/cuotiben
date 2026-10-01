@@ -2029,6 +2029,23 @@ pre,
   }
 }
 
+/* --- 数据说明页的操作结果提示 --- */
+.data-message {
+  margin-top: var(--sp-tight);
+  padding: var(--sp-tight) var(--sp-compact);
+  border-radius: var(--radius-control);
+  background: var(--c-success-soft);
+  /* 用文字色 token，不用 --c-success 本身（对浅底对比度不足，见 AGENTS.md 10.7） */
+  color: var(--c-success-text);
+  font-size: var(--fs-aux);
+  word-break: break-all;
+}
+
+.data-message--error {
+  background: var(--c-danger-soft);
+  color: var(--c-danger-text);
+}
+
 /* --- 6.1 页面切换：淡入淡出 200ms --- */
 /*
    用 CSS 动画而不是 Vue 的 <transition>：
