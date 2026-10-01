@@ -143,7 +143,7 @@ def main() -> int:
             QuestionCreate,
             QuestionOut,
             ReviewCountOut,
-            ReviewItem,
+            ReviewItemOut,
             SettingsOut,
             SettingsUpdate,
         )
@@ -222,18 +222,16 @@ def main() -> int:
             check("响应模型 datetime 带时区", aware, f"created_at={iso}")
 
         # ---------- 7. 今日队列 / 打勾 schema ----------
-        item = ReviewItem(
+        item = ReviewItemOut(
             question_id=1, folder_id=2, folder_name="极限与连续", stem="x",
             answer=None, is_starred=True, mastery_status="still_wrong",
             next_review_at=datetime.now(UTC), interval_index=0,
-            overdue_days=15, is_backlog=True,
+            overdue_days=15, is_backlog=True, is_overdue=True,
         )
-        check("ReviewItem 支持积压区标记", item.is_backlog and item.overdue_days == 15)
+        check("ReviewItemOut 支持积压区标记", item.is_backlog and item.overdue_days == 15)
 
-        cnt = ReviewCountOut(due_count=3, starred_due_count=1)
-        check("ReviewCountOut 角标字段可用",
-              cnt.due_count == 3 and cnt.starred_due_count == 1 and cnt.total == 0,
-              f"{cnt.model_dump()}")
+        cnt = ReviewCountOut(count=3)
+        check("ReviewCountOut 只回 count（前端现有契约）", cnt.count == 3, f"{cnt.model_dump()}")
 
         req = BackfillResetRequest(reset_days=14, spread=True)
         check("BackfillResetRequest 默认/显式值正确",

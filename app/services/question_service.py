@@ -28,7 +28,7 @@ from ..models import (
     question_tags,
 )
 from ..models.base import utcnow
-from . import folder_service, image_service, settings_service, tag_service
+from . import folder_service, image_service, review_service, tag_service
 
 
 class QuestionError(Exception):
@@ -288,16 +288,8 @@ def create_question(
     _sync_images(db, question, images or [])
 
     # 首条复习记录：interval_index=0，next_review_at = now() + intervals[0]
-    db.add(
-        ReviewRecord(
-            question_id=question.id,
-            review_count=0,
-            interval_index=0,
-            last_review_at=None,
-            next_review_at=settings_service.first_review_at(db),
-            mastery_level=0,
-        )
-    )
+    # 生成逻辑收敛在 review_service，避免两处各写一遍记忆曲线起点
+    review_service.create_initial_record(db, question.id)
 
     db.commit()
     db.refresh(question)

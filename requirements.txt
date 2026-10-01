@@ -13,6 +13,10 @@ sqlalchemy
 pydantic
 python-dotenv
 
+# 时区数据库：Windows 没有系统 IANA tz 数据库，zoneinfo 必须靠这个包
+# （缺了会导致"今日"边界计算直接报 ZoneInfoNotFoundError）
+tzdata
+
 # 图片处理（pillow-heif 用于 HEIC 支持，必须显式依赖）
 pillow
 pillow-heif

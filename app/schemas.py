@@ -268,66 +268,89 @@ class ReviewRecordOut(OrmBase):
 
 
 class ReviewCheckRequest(BaseModel):
-    """POST /review/{id}/check —— 打勾。
+    """POST /review/{question_id}/check —— 打勾（requirements.md 2.11）。
 
-    不校验是否处于待复习状态；允许重复打勾（requirements.md 2.11）。
-    mastery_level 省略时按 0 处理。
+    不校验是否处于待复习状态；允许重复打勾，不返回 409。
+    mastery 只在精细模式（现未启用）下影响阶段推进，见
+    services/review_service.py 的 `_resolve_interval_index`。
     """
 
+    model_config = ConfigDict(populate_by_name=True)
+
+    # 前端字段名为 mastery（requirements.md 4.5）
+    mastery: int | None = Field(default=None, ge=0, le=3)
+    # 兼容旧命名
     mastery_level: int | None = Field(default=None, ge=0, le=3)
+
+    @property
+    def resolved_mastery(self) -> int | None:
+        """取实际生效的掌握程度，mastery 优先。"""
+        if self.mastery is not None:
+            return self.mastery
+        return self.mastery_level
 
 
 class ReviewCheckResult(BaseModel):
     """打勾结果：返回新记录与下一次复习时间。"""
 
     record: ReviewRecordOut
-    next_review_at: datetime
+    next_review_at: datetime | None
     interval_index: int
 
 
-class ReviewItem(OrmBase):
-    """今日队列 / 复习视图中的一道题（requirements.md 2.9）。
+class ReviewItemOut(OrmBase):
+    """今日队列 / 复习视图中的一道题（requirements.md 2.9 / 4.5）。
 
-    通知面板复习视图需要：题干、图片、标签、答案、星标、正误状态。
+    通知面板的复习视图需要：题干、答案、图片、标签、文件夹、星标、复习状态。
     """
 
     question_id: int
-    folder_id: int
-    folder_name: str | None = None
     stem: str | None
     answer: str | None
     is_starred: bool
     mastery_status: MasteryStatus
+    folder_id: int
+    folder_name: str | None
+    interval_index: int
+    next_review_at: datetime | None
     images: list[QuestionImageOut] = Field(default_factory=list)
     tags: list[TagOut] = Field(default_factory=list)
-    next_review_at: datetime
-    interval_index: int
     # 逾期天数（未逾期为 0），用于标灰 / 积压区 / 角标配色
     overdue_days: int = 0
     # 逾期 >=14 天折叠到积压区
     is_backlog: bool = False
+    is_overdue: bool = False
 
 
-class ReviewQueueOut(BaseModel):
-    """GET /review/today —— 今日队列。
+class ReviewCountOut(BaseModel):
+    """GET /review/count —— 铃铛角标用。
 
-    今日队列 = 今日到期 + 最多 N 道逾期补卡（requirements.md 2.12）。
+    只回 count：现有前端契约就只要这一个值，其他字段前端用不上；
+    需要"重点题到期数、最大逾期天数"时再另开接口，避免字段膨胀后无人清理。
     """
+
+    count: int = 0
+
+
+class ReviewTodayMeta(BaseModel):
+    """今日队列的构成说明，供界面显示"今日到期 X 题，补卡 Y 题（上限 N）"。"""
 
     due_count: int = 0
     backfill_count: int = 0
     backfill_limit: int = DEFAULT_BACKFILL_LIMIT
+    overdue_total: int = 0
     total: int = 0
-    items: list[ReviewItem] = Field(default_factory=list)
 
 
-class ReviewCountOut(BaseModel):
-    """GET /review/count —— 铃铛角标用。"""
+class ReviewTodayOut(BaseModel):
+    """GET /review/today。
 
-    due_count: int = 0
-    starred_due_count: int = 0
-    overdue_days_max: int = 0
-    total: int = 0
+    按用户约定，`items` 就是返回的数组本身（见 routers/review.py 的说明）；
+    本模型用于带 meta 的形态，默认不启用。
+    """
+
+    items: list[ReviewItemOut] = Field(default_factory=list)
+    meta: ReviewTodayMeta = Field(default_factory=ReviewTodayMeta)
 
 
 class BackfillResetRequest(BaseModel):
