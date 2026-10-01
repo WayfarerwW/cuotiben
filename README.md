@@ -45,20 +45,28 @@ cuotiben/
 ├── docs/                  # 需求文档 + UI 说明书（只读，不改）
 ├── AGENTS.md              # Agent 工作规则
 ├── app/                   # 后端 + 前端
+│   ├── main.py            # 应用入口：API 路由 → 静态挂载 → 根路径
 │   ├── routers/           # 路由（只做参数校验与响应）
 │   ├── services/          # 业务逻辑
 │   ├── models/            # ORM 模型
 │   ├── templates/         # PDF 模板
 │   └── static/            # 前端资源
-│       ├── css/
+│       ├── index.html     # Vue 模板（挂载点）
+│       ├── css/style.css  # 设计令牌 + 全部样式
 │       └── js/
-├── data/                  # SQLite 数据库
+│           ├── api.js     # 接口封装
+│           ├── app.js     # Vue 主逻辑
+│           └── vendor/    # vendored 第三方库（见「第三方依赖」）
+├── data/                  # SQLite 数据库（data/*.db 已忽略）
 ├── uploads/               # 图片（按年月日分片，文件名 UUID）
 ├── backups/               # 数据库每日备份
 ├── fonts/                 # 中文字体（PDF 导出用，Noto Sans SC）
-├── tools/                 # 环境自检脚本（verify_font / verify_heic）
+├── tools/                 # 环境自检与验证脚本
 ├── poc_out/               # 自检产物（已在 .gitignore 忽略）
 ├── requirements.txt
+├── run.py                 # 启动入口（uvicorn 127.0.0.1:8000, reload）
+├── start.bat              # Windows 启动脚本
+├── start.sh               # macOS / Linux 启动脚本
 └── README.md
 ```
 
@@ -118,13 +126,29 @@ pacman -S --noconfirm --needed \
 python run.py
 ```
 
-启动后浏览器访问 <http://localhost:8000>。
+也可以用启动脚本（内容就是 `python run.py`，只是省掉敲命令）：
 
-> 当前仓库处于**初始化阶段**：已完成目录骨架、依赖清单、环境验证，业务代码尚未实现。
+```powershell
+# Windows：双击，或
+start.bat
+```
+
+```bash
+# macOS / Linux（首次需加执行权限）
+chmod +x start.sh
+./start.sh
+```
+
+启动后浏览器访问 <http://localhost:8000>。服务监听 `127.0.0.1`（纯本地单机），
+改代码会自动重启（uvicorn `reload=True`）。
+
+> 想确认"启动后确实能打开、没有 404、Vue 正常挂载"，
+> 可运行 `python tools/verify_launch.py`（会用临时库真实启动一次并逐项检查）。
 
 ### 环境自检
 
 ```bash
+python tools/verify_launch.py          # 启动可访问性：run.py 起服务、静态资源无 404、Vue 挂载
 python tools/verify_db_schemas.py      # 数据库连接、建表、settings 默认值、Pydantic schema
 python tools/verify_models.py          # ORM 表结构、外键级联、datetime 往返
 python tools/verify_softdelete.py      # 软删除与部分唯一索引

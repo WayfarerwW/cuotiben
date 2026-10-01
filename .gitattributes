@@ -1,0 +1,31 @@
+# 行尾与文件属性约定
+#
+# 背景：Windows 上 core.autocrlf=true 会把文本文件在 checkout 时转成 CRLF。
+# 这对 .sh 是致命的 —— bash 会因 CRLF 报 "$'\r': command not found"。
+# 因此这里显式声明：shell 脚本一律 LF，永不转换。
+
+* text=auto
+
+# Shell 脚本必须保持 LF，否则在 Linux/macOS 上无法执行
+*.sh text eol=lf
+
+# Windows 批处理用 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制文件不要做任何行尾转换
+*.ttf binary
+*.otf binary
+*.woff2 binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.heic binary
+*.db binary
+*.xlsx binary
+*.docx binary
+*.pdf binary
+
+# vendored 第三方库原样保留（其内部行尾是上游的，不要改）
+app/static/js/vendor/** -text
