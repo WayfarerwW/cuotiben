@@ -369,30 +369,62 @@ def update_question(
     mastery_status: str | None = None,
     sort_order: int | None = None,
     images: list[str] | None = None,
+    fields_to_update: set[str] | None = None,
 ) -> Question:
-    """编辑题目。只改传入的字段；tags/images 传了则整体替换。"""
+    """编辑题目。
+
+    传入 `fields_to_update`（路由用 `set(payload.model_fields_set)`）时按
+    "字段是否出现过"决定改不改，从而区分"未传"与"传 null"：
+
+      - 未传            -> 保持原值
+      - `stem`/`answer` 传 null -> 清空（需求 2.3 允许纯图片题目）
+      - `tags`/`images` 传 [] 或 null -> 清空（tags 清空标签、images 解除全部图片关联）
+      - 其余字段（folder_id / is_starred / mastery_status / sort_order）
+        不允许为 null，由 schemas.QuestionUpdate 的校验器直接 422，不会走到这里
+
+    不传 `fields_to_update` 时退化为旧语义（非 None 才更新），兼容已有调用。
+    """
     question = get_question(db, question_id)
+    explicit = fields_to_update is not None
 
-    if folder_id is not None and folder_id != question.folder_id:
-        folder_service.get_category_for_question(db, folder_id)
-        question.folder_id = folder_id
+    def should(field: str, value: object) -> bool:
+        if explicit:
+            return field in fields_to_update
+        return value is not None
 
-    if stem is not None:
+    if should("folder_id", folder_id):
+        if folder_id is None:
+            raise QuestionError("folder_id 不允许为 null")
+        if folder_id != question.folder_id:
+            folder_service.get_category_for_question(db, folder_id)
+            question.folder_id = folder_id
+
+    if should("stem", stem):
         question.stem = stem
-    if answer is not None:
+    if should("answer", answer):
         question.answer = answer
-    if is_starred is not None:
+
+    if should("is_starred", is_starred):
+        if is_starred is None:
+            raise QuestionError("is_starred 不允许为 null")
         question.is_starred = is_starred
-    if mastery_status is not None:
+
+    if should("mastery_status", mastery_status):
+        if mastery_status is None:
+            raise QuestionError("mastery_status 不允许为 null")
         question.mastery_status = mastery_status
-    if sort_order is not None:
+
+    if should("sort_order", sort_order):
+        if sort_order is None:
+            raise QuestionError("sort_order 不允许为 null")
         question.sort_order = sort_order
 
-    if tags is not None:
-        question.tags = tag_service.get_or_create_tags(db, tags)  # type: ignore[assignment]
+    # tags / images 传了就整体替换；传 [] 或 null 都是"清空"
+    if should("tags", tags):
+        question.tags = tag_service.get_or_create_tags(db, tags or [])  # type: ignore[assignment]
 
-    if images is not None:
-        _sync_images(db, question, images)
+    if should("images", images):
+        _sync_images(db, question, images or [])
 
     db.commit()
     db.refresh(question)

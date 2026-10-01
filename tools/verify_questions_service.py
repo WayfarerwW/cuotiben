@@ -63,7 +63,7 @@ def main() -> int:
         from app.services import question_service as qsvc
         from app.services import settings_service, tag_service
         from app.services.folder_service import InvalidFolderStructureError
-        from app.services.question_service import QuestionNotFoundError
+        from app.services.question_service import QuestionError, QuestionNotFoundError
         from app.services.tag_service import InvalidTagError
 
         init_db()
@@ -233,6 +233,50 @@ def main() -> int:
                   partial.answer == "只改答案" and partial.stem == "改过的题干"
                   and [t.name for t in partial.tags] == ["新标签"])
 
+            # ---- fields_to_update：区分"未传"与"传 null" ----
+            print("\n-- fields_to_update（未传 vs 传 null）--")
+            before = qsvc.get_question(db, q1.id)
+            keep = qsvc.update_question(db, q1.id, fields_to_update=set())
+            check("空 fields_to_update -> 什么都不改",
+                  keep.stem == before.stem and keep.answer == before.answer,
+                  f"stem={keep.stem!r} answer={keep.answer!r}")
+
+            cleared = qsvc.update_question(db, q1.id, stem=None, answer=None,
+                                           fields_to_update={"stem", "answer"})
+            check("传 null 清空 stem", cleared.stem is None, repr(cleared.stem))
+            check("传 null 清空 answer", cleared.answer is None, repr(cleared.answer))
+            check("清空 stem/answer 不影响标签",
+                  [t.name for t in cleared.tags] == ["新标签"],
+                  f"{[t.name for t in cleared.tags]}")
+
+            # 只清一个字段，另一个保持
+            qsvc.update_question(db, q1.id, stem="再写题干", answer="再写答案",
+                                 fields_to_update={"stem", "answer"})
+            only_answer = qsvc.update_question(db, q1.id, answer=None,
+                                               fields_to_update={"answer"})
+            check("只传 answer=null 时 stem 保持原值",
+                  only_answer.stem == "再写题干" and only_answer.answer is None,
+                  f"stem={only_answer.stem!r} answer={only_answer.answer!r}")
+
+            # tags / images 传空列表清空
+            emptied = qsvc.update_question(db, q1.id, tags=[], images=[],
+                                           fields_to_update={"tags", "images"})
+            check("tags=[] 清空标签",
+                  [t.name for t in emptied.tags] == [], f"{[t.name for t in emptied.tags]}")
+            check("images=[] 清空图片关联", len(emptied.images) == 0,
+                  f"{len(emptied.images)} 张")
+
+            # 不允许为 null 的字段：service 层也兜底（不依赖 Pydantic）
+            for field, kw in (("folder_id", {"folder_id": None}),
+                              ("is_starred", {"is_starred": None}),
+                              ("mastery_status", {"mastery_status": None}),
+                              ("sort_order", {"sort_order": None})):
+                expect_raises(
+                    f"service 层拒绝 {field}=null",
+                    (QuestionError,), qsvc.update_question, db, q1.id,
+                    fields_to_update={field}, **kw,
+                )
+
             expect_raises("编辑不存在的题目 -> QuestionNotFoundError",
                           (QuestionNotFoundError,), qsvc.update_question, db, 99999,
                           stem="x")
@@ -284,6 +328,69 @@ def main() -> int:
             search_full = tag_service.search_tags(db, "ＡＢＣ")
             check("联想搜索词也归一化（全角输入不炸）", search_full == [],
                   "无匹配返回空")
+
+        # ================= HTTP 层：PUT 传 null 的语义 =================
+        # 422 是在 schemas.QuestionUpdate 的校验器里产生的，
+        # 只有走 HTTP 才能验证到这一层。
+        print("\n-- HTTP 层：PUT /questions/{id} 传 null --")
+        from fastapi.testclient import TestClient
+
+        from app.main import app
+
+        with TestClient(app) as client:
+            subj2 = client.post("/folders", json={"name": "线代"}).json()
+            cat2 = client.post("/folders",
+                               json={"name": "矩阵", "parent_id": subj2["id"]}).json()
+            hq = client.post("/questions",
+                             json={"folder_id": cat2["id"], "stem": "题干原文",
+                                   "answer": "答案原文",
+                                   "tags": ["矩阵"]}).json()
+            qid = hq["id"]
+
+            r = client.put(f"/questions/{qid}", json={"answer": None})
+            check("HTTP PUT answer=null -> 200", r.status_code == 200,
+                  f"HTTP {r.status_code}")
+            check("HTTP answer 被清空", r.json()["answer"] is None,
+                  repr(r.json()["answer"]))
+            check("HTTP stem 保持原值", r.json()["stem"] == "题干原文",
+                  repr(r.json()["stem"]))
+
+            r = client.put(f"/questions/{qid}", json={"stem": None})
+            check("HTTP PUT stem=null -> 200 且清空",
+                  r.status_code == 200 and r.json()["stem"] is None,
+                  f"HTTP {r.status_code} stem={r.json().get('stem')!r}")
+
+            r = client.put(f"/questions/{qid}", json={"answer": None, "stem": "重写"})
+            check("HTTP 同一请求里 null 与有值并存",
+                  r.json()["stem"] == "重写" and r.json()["answer"] is None,
+                  f"stem={r.json()['stem']!r} answer={r.json()['answer']!r}")
+
+            r = client.put(f"/questions/{qid}", json={"tags": []})
+            check("HTTP tags=[] -> 清空标签", r.status_code == 200
+                  and r.json()["tags"] == [], f"{r.json()['tags']}")
+
+            # 不允许为 null 的字段 -> 422
+            for field in ("folder_id", "is_starred", "mastery_status",
+                          "sort_order", "tags", "images"):
+                r = client.put(f"/questions/{qid}", json={field: None})
+                check(f"HTTP PUT {field}=null -> 422", r.status_code == 422,
+                      f"HTTP {r.status_code}")
+
+            r = client.put(f"/questions/{qid}", json={"folder_id": 0})
+            check("HTTP folder_id=0 -> 422（ge=1）", r.status_code == 422,
+                  f"HTTP {r.status_code}")
+
+            # 被拒的请求不留副作用
+            after = client.get(f"/questions/{qid}").json()
+            check("被拒的 PUT 没有改动数据",
+                  after["stem"] == "重写" and after["folder_id"] == cat2["id"],
+                  f"stem={after['stem']!r} folder_id={after['folder_id']}")
+
+            # 空 body：什么都不改
+            r = client.put(f"/questions/{qid}", json={})
+            check("HTTP PUT 空 body -> 200 且不改动",
+                  r.status_code == 200 and r.json()["stem"] == "重写",
+                  f"HTTP {r.status_code} stem={r.json().get('stem')!r}")
 
         engine.dispose()
 

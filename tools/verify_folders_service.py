@@ -210,6 +210,54 @@ def main() -> int:
 
         from app.database import engine
 
+        # ---------- HTTP 层：PUT 传 name=null 必须是 422 ----------
+        # name 为必填，不允许传 null（requirements.md 2.2 / 4.1）。
+        # 该 422 由 schemas.FolderUpdate 的校验器产生，只有走 HTTP 才能验证。
+        print("\n-- HTTP 层：PUT /folders/{id} 传 null --")
+        from fastapi.testclient import TestClient
+
+        from app.main import app
+
+        with TestClient(app) as client:
+            # 前面的用例已经建过"概率论"，这里用不会重复的名字
+            subj_resp = client.post("/folders", json={"name": "HTTP 层学科"})
+            check("HTTP 建学科 -> 201", subj_resp.status_code == 201,
+                  f"HTTP {subj_resp.status_code} {subj_resp.text[:80]}")
+            subj = subj_resp.json()
+            node = client.post("/folders",
+                               json={"name": "HTTP 层大类",
+                                     "parent_id": subj["id"]}).json()
+
+            r = client.put(f"/folders/{node['id']}", json={"name": None})
+            check("HTTP PUT name=null -> 422（name 必填）", r.status_code == 422,
+                  f"HTTP {r.status_code} {r.text[:110]}")
+            check("报错信息提到 name",
+                  "name" in r.text, r.text[:110])
+
+            r = client.put(f"/folders/{node['id']}", json={"name": ""})
+            check("HTTP PUT name=空串 -> 422", r.status_code == 422,
+                  f"HTTP {r.status_code}")
+
+            r = client.put(f"/folders/{node['id']}", json={"name": "新名字"})
+            check("HTTP PUT name=正常值 -> 200", r.status_code == 200,
+                  f"HTTP {r.status_code}")
+            check("重命名结果正确", r.json()["name"] == "新名字", r.json()["name"])
+
+            # name=null 被拒后名称不应被改动
+            client.put(f"/folders/{node['id']}", json={"name": None})
+            r = client.get("/folders/tree")
+            still = [c for n in r.json() if n["id"] == subj["id"]
+                     for c in n["children"] if c["id"] == node["id"]]
+            check("name=null 被拒后名称未被改动",
+                  bool(still) and still[0]["name"] == "新名字",
+                  str(still[0]["name"]) if still else "未找到节点")
+
+            # 只传 sort_order 时 name 不动（未传 ≠ 传 null）
+            r = client.put(f"/folders/{node['id']}", json={"sort_order": 5})
+            check("HTTP 只传 sort_order -> 200 且 name 不动",
+                  r.status_code == 200 and r.json()["name"] == "新名字",
+                  f"HTTP {r.status_code} name={r.json().get('name')!r}")
+
         engine.dispose()
 
     print("-" * 78)

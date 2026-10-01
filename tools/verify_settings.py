@@ -286,6 +286,55 @@ def main() -> int:
                   r.status_code == 200 and r.json()["intervals"] == [2, 4, 8, 16],
                   str(r.json()["intervals"]))
 
+            # ---- 传 null：删除该配置项，回退默认值 ----
+            print("\n-- 传 null 回退默认值 --")
+            r = client.put("/settings", json={"intervals": None})
+            check("PUT intervals=null -> 200", r.status_code == 200,
+                  f"HTTP {r.status_code} {r.text[:90]}")
+            check("intervals 回退默认 [3,7,15,30]",
+                  r.json()["intervals"] == DEFAULT_INTERVALS,
+                  str(r.json()["intervals"]))
+            check("其它项不受影响（backfill_limit 仍是 33）",
+                  r.json()["backfill_limit"] == 33, str(r.json()["backfill_limit"]))
+
+            with SessionLocal() as db:
+                row = db.query(Setting).filter_by(key="intervals").one_or_none()
+                check("回退默认是删除该行（而不是写入默认字符串）", row is None,
+                      "行已删除" if row is None else f"仍存在: {row.value}")
+
+            r = client.put("/settings", json={"backfill_limit": None,
+                                              "backfill_reset_days": None})
+            check("backfill_limit=null 回退默认",
+                  r.json()["backfill_limit"] == DEFAULT_BACKFILL_LIMIT,
+                  str(r.json()["backfill_limit"]))
+            check("backfill_reset_days=null 回退默认",
+                  r.json()["backfill_reset_days"] == DEFAULT_BACKFILL_RESET_DAYS,
+                  str(r.json()["backfill_reset_days"]))
+
+            # 回退后再设置仍然可用
+            r = client.put("/settings", json={"intervals": [5, 10, 20, 40]})
+            check("回退后可重新设置", r.json()["intervals"] == [5, 10, 20, 40],
+                  str(r.json()["intervals"]))
+            r = client.put("/settings", json={"intervals": None})
+            check("可再次回退", r.json()["intervals"] == DEFAULT_INTERVALS)
+
+            # 全部置 null -> 全部回默认，且此时库应为空
+            client.put("/settings", json={"backfill_limit": 9})
+            r = client.put("/settings", json={"intervals": None,
+                                              "backfill_limit": None,
+                                              "backfill_reset_days": None})
+            check("三项同时置 null -> 全部回默认",
+                  r.json() == {"intervals": DEFAULT_INTERVALS,
+                               "backfill_limit": DEFAULT_BACKFILL_LIMIT,
+                               "backfill_reset_days": DEFAULT_BACKFILL_RESET_DAYS},
+                  str(r.json()))
+            with SessionLocal() as db:
+                check("全部回退后 settings 表为空（下次启动会重新写入默认值）",
+                      db.query(Setting).count() == 0,
+                      f"{db.query(Setting).count()} 行")
+                # 重新播种，避免影响后续断言
+                ssvc.ensure_default_settings(db)
+
         engine.dispose()
 
     print("-" * 80)

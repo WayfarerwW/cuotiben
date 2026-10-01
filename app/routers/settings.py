@@ -35,7 +35,10 @@ def get_settings(db: Session = Depends(get_db)) -> SettingsOut:
 def update_settings(
     payload: SettingsUpdate, db: Session = Depends(get_db)
 ) -> SettingsOut:
-    """只更新请求体里出现的字段，未传的保持不变。
+    """只更新请求体里出现的字段。
+
+    传 `null` 的 key 表示**删除该配置项、回退默认值**；
+    未出现的字段保持不变。"未传"与"传 null"由 `model_fields_set` 区分。
 
     校验（与 Pydantic 层一致，service 再兜一道，因为写库路径可能不止 API 一条）：
       - `intervals` 必须是 4 个正整数且**严格递增**（requirements.md 2.10）
@@ -48,6 +51,7 @@ def update_settings(
             intervals=payload.intervals,
             backfill_limit=payload.backfill_limit,
             backfill_reset_days=payload.backfill_reset_days,
+            fields_to_update=set(payload.model_fields_set),
         )
     except SettingsError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e

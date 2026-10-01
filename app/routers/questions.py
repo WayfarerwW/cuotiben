@@ -127,6 +127,8 @@ def update_question(
             else None,
             sort_order=payload.sort_order,
             images=payload.images,
+            # 区分"未传"与"传 null"：未传保持原值，传 null 按字段语义清空
+            fields_to_update=set(payload.model_fields_set),
         )
     question_service.attach_review_state(db, [question])
     return question

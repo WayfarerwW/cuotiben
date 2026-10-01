@@ -67,10 +67,20 @@ class FolderUpdate(BaseModel):
 
     parent_id 不在这里修改：需求 2.2 只要求两级结构，移动节点会引入
     "跨级搬运"的额外校验，暂不支持；如需移动另开接口。
+
+    `name` 为必填项，不允许传 null：传 null 由校验器直接返回 422，
+    而不是静默忽略（否则前端会以为改名成功了）。
     """
 
     name: str | None = Field(default=None, min_length=1, max_length=200)
     sort_order: int | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _reject_null_name(cls, v: str | None) -> str | None:
+        if v is None:
+            raise ValueError("name 为必填，不允许传 null")
+        return v
 
 
 class FolderOut(OrmBase):
@@ -122,16 +132,36 @@ class QuestionCreate(BaseModel):
 
 
 class QuestionUpdate(BaseModel):
-    folder_id: int | None = None
+    """PUT /questions/{id} 编辑（requirements.md 4.2）。
+
+    字段分两类（配合 `model_fields_set` 使用）：
+
+    - **允许为空的字段**：`stem`、`answer`。
+      传 `null` 表示清空（需求 2.3 允许纯图片题目，题干答案都为空）。
+    - **不允许为空的字段**：`folder_id`、`is_starred`、`mastery_status`、
+      `sort_order`、`tags`、`images`。
+      它们在库里都非空，所以传 `null` 直接 422，而不是静默当作"清空"。
+
+    "未传"与"传 null"的区别由 `model_fields_set` 表达，见
+    app/services/question_service.update_question。
+    """
+
+    folder_id: int | None = Field(default=None, ge=1)
     stem: str | None = None
     answer: str | None = None
     is_starred: bool | None = None
     mastery_status: MasteryStatus | None = None
     sort_order: int | None = None
-    # 传了就整体替换该题标签；不传表示不改
     tags: list[str] | None = None
-    # 同理，传了就整体替换图片列表
     images: list[str] | None = None
+
+    @field_validator("folder_id", "is_starred", "mastery_status", "sort_order",
+                     "tags", "images")
+    @classmethod
+    def _reject_null_for_non_nullable(cls, v, info):
+        if v is None:
+            raise ValueError(f"{info.field_name} 不允许传 null")
+        return v
 
 
 class TagOut(OrmBase):
@@ -483,7 +513,14 @@ class SettingsOut(BaseModel):
 
 
 class SettingsUpdate(BaseModel):
-    """PUT /settings —— 只传要改的项。
+    """PUT /settings —— 批量更新（requirements.md 4.8）。
+
+    只传要改的项。`model_fields_set` 区分"未传"与"传 null"：
+
+    - **未传**：保持原值不动
+    - **传 null**：删除该配置项，回退到默认值
+      （intervals -> [3,7,15,30]、backfill_limit -> 20、
+      backfill_reset_days -> 14）
 
     intervals 固定 4 个阶段（对应 review_records.interval_index 0~3），
     每项为正整数天数，且必须递增 —— 间隔不递增就没有"记忆曲线"的意义。
