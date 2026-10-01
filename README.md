@@ -133,6 +133,19 @@ powershell -ExecutionPolicy Bypass -File tools/curl_api_js.ps1   # 前端 api.js
 > Windows PowerShell 5.1 注意：这些脚本必须存为 **UTF-8 with BOM**，否则中文会被按 GBK 解读而报语法错误。
 > `curl_api_js.ps1` 需要 node 在 PATH 中（断言逻辑在 `tools/verify_api_js.js`）。
 
+前端（Vue 应用）的验证需要先在**同一个 origin** 上提供静态文件与 API，
+再在无头浏览器里操作页面。两步都要 node 与 Edge：
+
+```powershell
+# 1) 起测试服务器（静态前端 + 后端 API + 测试页，同一 origin）
+python tools/_serve_for_ui_test.py 8941 <harness.html 路径> <临时库路径>
+# 2) 跑断言（会自行造数据、回拨到期时间，然后驱动浏览器）
+python tools/verify_ui.py http://127.0.0.1:8941/ <临时库路径>
+```
+
+> 这两个工具名以下划线开头，是**测试脚手架**，不是产品代码：
+> 真实部署时前端应当由 `app/main.py` 直接提供（目前尚未挂载，见「已知缺口」）。
+
 ## 文档
 
 实现任何功能前先阅读对应章节，不要凭记忆实现：

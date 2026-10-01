@@ -8,206 +8,131 @@
   <title>错题本</title>
 
   <!--
-    视觉体系见 docs/ui-design.md 第 2、3 节（硬约束，AGENTS.md 3.2）。
-    结构说明：
-      - 本文件只负责骨架与语义结构，样式全部在 css/style.css
-      - 图标用内联 SVG sprite（见下方 <svg> 定义块），不依赖任何外部资源
-      - 页面内不写死业务数据，动态内容由 js/app.js 挂载（见各处的 data-* 钩子）
+    本文件是 Vue 应用的挂载点与模板。约定见 AGENTS.md：
+      - 3.2：视觉严格遵循 docs/ui-design.md（设计令牌在 css/style.css 的 :root）
+      - 3.2：不用 vue-router，页面切换用组件内状态（currentPage）
+      - 3.2：API 调用统一走 js/api.js，本文件与 app.js 不直接 fetch
+      - 4.3：通知面板内点击列表项**在面板内展开复习视图**，不跳页
+      - 4.5：草稿保护用 localStorage，四个 key 见 app.js 的 DRAFT_KEYS
+
+    脚本顺序：vendor/vue -> js/api.js -> js/app.js（app.js 依赖前两者）
   -->
+
+  <!-- 图标 sprite：内联，无外部依赖 -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+    <symbol id="i-logo" viewBox="0 0 24 24"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10l2 2.5h6.5A1.5 1.5 0 0 1 20 8v10a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18z"/><path d="M8.5 13.5l2 2 4-4.5"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4v-5H9v5H5a1 1 0 0 1-1-1z"/></symbol>
+    <symbol id="i-questions" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/></symbol>
+    <symbol id="i-review" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v4h-4"/><path d="M9 12.5l2 2 4-4.5"/></symbol>
+    <symbol id="i-notes" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M15 3v4h4"/><path d="M9 12h6M9 16h4"/></symbol>
+    <symbol id="i-stats" viewBox="0 0 24 24"><path d="M5 20V10M12 20V4M19 20v-7"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.5-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 4a2 2 0 1 1 4 0 1.7 1.7 0 0 0 2.9 1.5l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 11a2 2 0 1 1 0 4 1.7 1.7 0 0 0-1.6 1z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.3-4.3"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v10"/><path d="M8 11l4 4 4-4"/><path d="M5 19h14"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 15V10a6 6 0 1 0-12 0v5l-1.5 2.5h15z"/><path d="M10 20a2 2 0 0 0 4 0"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"/></symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+    <symbol id="i-panel-left" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9.5 4v16"/></symbol>
+    <symbol id="i-plus-folder" viewBox="0 0 24 24"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10l2 2.5h6.5A1.5 1.5 0 0 1 20 8v10a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18z"/><path d="M12 11v5M9.5 13.5h5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v5M12 16h.01"/></symbol>
+    <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 13.5 6 5h12l2 8.5V19H4z"/><path d="M4 13.5h4l1 2.5h6l1-2.5h4"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 4.5l2.4 5 5.4.8-3.9 3.8.9 5.4-4.8-2.6-4.8 2.6.9-5.4L4.2 10.3l5.4-.8z"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 6l4 4"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 13h8l1-13"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M5 17l4.5-4.5L13 16l3-3 3 3"/></symbol>
+    <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M11 6l-6 6 6 6M5 12h14"/></symbol>
+    <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M13 6l6 6-6 6M19 12H5"/></symbol>
+    <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="6.5" rx="7" ry="2.5"/><path d="M5 6.5v11c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-11"/><path d="M5 12c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5"/></symbol>
+  </svg>
+
   <link rel="stylesheet" href="css/style.css">
 </head>
 
 <body>
-  <!-- ===================== 图标 sprite（内联，无外部依赖）===================== -->
-  <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
-    <symbol id="i-logo" viewBox="0 0 24 24">
-      <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10l2 2.5h6.5A1.5 1.5 0 0 1 20 8v10a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18z"/>
-      <path d="M8.5 13.5l2 2 4-4.5"/>
-    </symbol>
-    <symbol id="i-home" viewBox="0 0 24 24">
-      <path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4v-5H9v5H5a1 1 0 0 1-1-1z"/>
-    </symbol>
-    <symbol id="i-questions" viewBox="0 0 24 24">
-      <rect x="4" y="4" width="16" height="16" rx="2"/>
-      <path d="M8 9h8M8 13h8M8 17h5"/>
-    </symbol>
-    <symbol id="i-review" viewBox="0 0 24 24">
-      <path d="M20 12a8 8 0 1 1-2.3-5.6"/>
-      <path d="M20 4v4h-4"/>
-      <path d="M9 12.5l2 2 4-4.5"/>
-    </symbol>
-    <symbol id="i-notes" viewBox="0 0 24 24">
-      <path d="M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/>
-      <path d="M15 3v4h4"/>
-      <path d="M9 12h6M9 16h4"/>
-    </symbol>
-    <symbol id="i-stats" viewBox="0 0 24 24">
-      <path d="M5 20V10M12 20V4M19 20v-7"/>
-    </symbol>
-    <symbol id="i-settings" viewBox="0 0 24 24">
-      <circle cx="12" cy="12" r="3"/>
-      <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.5-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 4a2 2 0 1 1 4 0 1.7 1.7 0 0 0 2.9 1.5l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 11a2 2 0 1 1 0 4 1.7 1.7 0 0 0-1.6 1z"/>
-    </symbol>
-    <symbol id="i-search" viewBox="0 0 24 24">
-      <circle cx="11" cy="11" r="6"/>
-      <path d="M20 20l-4.3-4.3"/>
-    </symbol>
-    <symbol id="i-plus" viewBox="0 0 24 24">
-      <path d="M12 5v14M5 12h14"/>
-    </symbol>
-    <symbol id="i-download" viewBox="0 0 24 24">
-      <path d="M12 4v10"/>
-      <path d="M8 11l4 4 4-4"/>
-      <path d="M5 19h14"/>
-    </symbol>
-    <symbol id="i-bell" viewBox="0 0 24 24">
-      <path d="M18 15V10a6 6 0 1 0-12 0v5l-1.5 2.5h15z"/>
-      <path d="M10 20a2 2 0 0 0 4 0"/>
-    </symbol>
-    <symbol id="i-user" viewBox="0 0 24 24">
-      <circle cx="12" cy="8.5" r="3.5"/>
-      <path d="M5 20a7 7 0 0 1 14 0"/>
-    </symbol>
-    <symbol id="i-chevron-down" viewBox="0 0 24 24">
-      <path d="M6 9.5l6 6 6-6"/>
-    </symbol>
-    <symbol id="i-chevron-right" viewBox="0 0 24 24">
-      <path d="M9.5 6l6 6-6 6"/>
-    </symbol>
-    <symbol id="i-menu" viewBox="0 0 24 24">
-      <path d="M4 7h16M4 12h16M4 17h16"/>
-    </symbol>
-    <symbol id="i-panel-left" viewBox="0 0 24 24">
-      <rect x="3" y="4" width="18" height="16" rx="2"/>
-      <path d="M9.5 4v16"/>
-    </symbol>
-    <symbol id="i-plus-folder" viewBox="0 0 24 24">
-      <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10l2 2.5h6.5A1.5 1.5 0 0 1 20 8v10a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18z"/>
-      <path d="M12 11v5M9.5 13.5h5"/>
-    </symbol>
-    <symbol id="i-check" viewBox="0 0 24 24">
-      <path d="M5 12.5l4.5 4.5L19 7"/>
-    </symbol>
-    <symbol id="i-close" viewBox="0 0 24 24">
-      <path d="M6 6l12 12M18 6L6 18"/>
-    </symbol>
-    <symbol id="i-alert" viewBox="0 0 24 24">
-      <circle cx="12" cy="12" r="8.5"/>
-      <path d="M12 8v5M12 16h.01"/>
-    </symbol>
-    <symbol id="i-inbox" viewBox="0 0 24 24">
-      <path d="M4 13.5 6 5h12l2 8.5V19H4z"/>
-      <path d="M4 13.5h4l1 2.5h6l1-2.5h4"/>
-    </symbol>
-  </svg>
+  <!-- Vue 挂载范围。所有交互由 js/app.js 接管。 -->
+  <div class="app" id="app" v-cloak
+       :class="{ 'is-collapsed': sidebarCollapsed, 'is-drawer-open': drawerOpen }">
 
-  <!-- ===================== 应用骨架 ===================== -->
-  <div class="app" id="app">
-
-    <!-- ---------- 左侧固定侧边栏（260px / 折叠 64px）---------- -->
-    <aside class="sidebar" id="sidebar" aria-label="主导航">
+    <!-- ===================== 左侧侧边栏 ===================== -->
+    <aside class="sidebar" aria-label="主导航">
       <div class="sidebar__brand">
         <span class="sidebar__brand-mark" aria-hidden="true">
-          <svg class="icon" aria-hidden="true"><use href="#i-logo"></use></svg>
+          <svg class="icon"><use href="#i-logo"></use></svg>
         </span>
         <span class="sidebar__brand-text">错题本</span>
       </div>
 
       <div class="sidebar__scroll">
-        <!-- 功能导航区 -->
+        <!-- 功能导航 -->
         <nav class="sidebar__group" aria-label="功能导航">
           <ul>
-            <li>
-              <a class="nav__item is-active" href="#/home" data-nav="home"
-                 aria-current="page" title="首页">
-                <svg class="icon" aria-hidden="true"><use href="#i-home"></use></svg>
-                <span class="nav__label">首页</span>
-              </a>
-            </li>
-            <li>
-              <a class="nav__item" href="#/questions" data-nav="questions" title="题目管理">
-                <svg class="icon" aria-hidden="true"><use href="#i-questions"></use></svg>
-                <span class="nav__label">题目管理</span>
-              </a>
-            </li>
-            <li>
-              <a class="nav__item" href="#/review" data-nav="review" title="今日复习">
-                <svg class="icon" aria-hidden="true"><use href="#i-review"></use></svg>
-                <span class="nav__label">今日复习</span>
-                <!-- 待复习数量由 js/app.js 填充 -->
-                <span class="nav__count num" data-bind="review-count"></span>
-              </a>
-            </li>
-            <li>
-              <a class="nav__item" href="#/notes" data-nav="notes" title="记事本">
-                <svg class="icon" aria-hidden="true"><use href="#i-notes"></use></svg>
-                <span class="nav__label">记事本</span>
-              </a>
-            </li>
-            <li>
-              <a class="nav__item" href="#/stats" data-nav="stats" title="统计分析">
-                <svg class="icon" aria-hidden="true"><use href="#i-stats"></use></svg>
-                <span class="nav__label">统计分析</span>
-              </a>
-            </li>
-            <li>
-              <a class="nav__item" href="#/settings" data-nav="settings" title="设置">
-                <svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg>
-                <span class="nav__label">设置</span>
+            <li v-for="item in navItems" :key="item.key">
+              <a class="nav__item" :class="{ 'is-active': currentPage === item.key }"
+                 :href="'#/' + item.key" :title="item.label"
+                 :aria-current="currentPage === item.key ? 'page' : null"
+                 @click.prevent="go(item.key)">
+                <svg class="icon"><use :href="'#' + item.icon"></use></svg>
+                <span class="nav__label">{{ item.label }}</span>
+                <span v-if="item.key === 'review' && reviewCount > 0"
+                      class="nav__count num">{{ reviewCount }}</span>
               </a>
             </li>
           </ul>
         </nav>
 
-        <!-- 学科文件夹树：两级（学科 → 大类） -->
+        <!-- 学科文件夹树（两级，可展开收起） -->
         <section class="sidebar__group" aria-label="学科文件夹">
           <div class="sidebar__group-title">
             <span>学科</span>
             <button class="icon-btn icon-btn--on-dark" type="button"
-                    data-action="new-subject" title="新建学科" aria-label="新建学科"
-                    style="width:24px;height:24px">
-              <svg class="icon icon--sm" aria-hidden="true"><use href="#i-plus-folder"></use></svg>
+                    title="新建学科" aria-label="新建学科"
+                    style="width:24px;height:24px"
+                    @click="promptNewSubject">
+              <svg class="icon icon--sm"><use href="#i-plus-folder"></use></svg>
             </button>
           </div>
 
-          <!--
-            以下演示两项折叠状态与占位；真实数据由 js/app.js 依据
-            GET /folders/tree 渲染（含 children 与 question_count）。
-          -->
-          <ul class="tree" id="folder-tree">
-            <li class="tree__node">
-              <div class="tree__row" role="button" tabindex="0" aria-expanded="false">
-                <svg class="icon icon--sm tree__caret" aria-hidden="true">
-                  <use href="#i-chevron-right"></use>
-                </svg>
+          <ul class="tree" v-if="folderTree.length">
+            <li v-for="subject in folderTree" :key="subject.id"
+                class="tree__node" :class="{ 'is-open': expandedFolders[subject.id] }">
+              <div class="tree__row" role="button" tabindex="0"
+                   :aria-expanded="expandedFolders[subject.id] ? 'true' : 'false'"
+                   @click="toggleFolder(subject.id)"
+                   @keydown.enter.prevent="toggleFolder(subject.id)"
+                   @keydown.space.prevent="toggleFolder(subject.id)">
+                <svg class="icon icon--sm tree__caret"><use href="#i-chevron-right"></use></svg>
                 <span class="tree__dot" aria-hidden="true"></span>
-                <span class="tree__label">高等数学</span>
-                <span class="tree__count num">0</span>
+                <span class="tree__label">{{ subject.name }}</span>
+                <span class="tree__count num">{{ subject.question_count || 0 }}</span>
               </div>
-              <ul class="tree__children">
-                <li>
-                  <div class="tree__row" role="button" tabindex="0">
-                    <span class="tree__label">极限与连续</span>
-                    <span class="tree__count num">0</span>
-                  </div>
-                </li>
-                <li>
-                  <div class="tree__row" role="button" tabindex="0">
-                    <span class="tree__label">导数与微分</span>
-                    <span class="tree__count num">0</span>
+              <ul class="tree__children" v-if="subject.children && subject.children.length">
+                <li v-for="cat in subject.children" :key="cat.id">
+                  <div class="tree__row"
+                       :class="{ 'is-active': currentFolderId === cat.id }"
+                       role="button" tabindex="0"
+                       @click="selectFolder(cat.id)"
+                       @keydown.enter.prevent="selectFolder(cat.id)"
+                       @keydown.space.prevent="selectFolder(cat.id)">
+                    <span class="tree__label">{{ cat.name }}</span>
+                    <span class="tree__count num">{{ cat.question_count || 0 }}</span>
                   </div>
                 </li>
               </ul>
             </li>
           </ul>
 
-          <p class="text-aux" data-bind="tree-hint" style="padding:8px;opacity:.6">
+          <p v-else class="text-aux" style="padding:8px;opacity:.6">
             暂无学科，点击上方 + 新建
           </p>
         </section>
       </div>
 
-      <!-- 用户信息区（固定底部） -->
+      <!-- 用户信息区 -->
       <div class="sidebar__user">
         <span class="avatar" aria-hidden="true">本</span>
         <span class="sidebar__user-meta">
@@ -220,145 +145,174 @@
       </div>
     </aside>
 
-    <!-- 移动端抽屉遮罩 -->
-    <div class="drawer-mask" id="drawer-mask" hidden></div>
+    <div class="drawer-mask" v-if="drawerOpen" @click="drawerOpen = false"></div>
 
-    <!-- ---------- 顶部导航栏（64px）---------- -->
-    <header class="topbar" id="topbar">
-      <!-- 汉堡菜单：仅移动端可见 -->
-      <button class="icon-btn topbar__hamburger" type="button" id="btn-hamburger"
-              title="打开菜单" aria-label="打开菜单" aria-expanded="false">
-        <svg class="icon icon--lg" aria-hidden="true"><use href="#i-menu"></use></svg>
+    <!-- ===================== 顶部导航栏 ===================== -->
+    <header class="topbar">
+      <button class="icon-btn topbar__hamburger" type="button"
+              title="打开菜单" aria-label="打开菜单"
+              :aria-expanded="drawerOpen ? 'true' : 'false'"
+              @click="drawerOpen = !drawerOpen">
+        <svg class="icon icon--lg"><use href="#i-menu"></use></svg>
       </button>
 
-      <!-- 折叠开关（桌面/平板） -->
-      <button class="icon-btn" type="button" id="btn-collapse"
-              title="折叠侧边栏" aria-label="折叠侧边栏" aria-expanded="true">
-        <svg class="icon icon--lg" aria-hidden="true"><use href="#i-panel-left"></use></svg>
+      <button class="icon-btn" type="button"
+              :title="sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'"
+              :aria-label="sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'"
+              :aria-expanded="sidebarCollapsed ? 'false' : 'true'"
+              @click="toggleSidebar">
+        <svg class="icon icon--lg"><use href="#i-panel-left"></use></svg>
       </button>
 
-      <!-- 搜索框：单框双查（keyword + tag 两次请求，前端按 id 合并去重） -->
+      <!-- 搜索框：单框双查（keyword 与 tag 两次请求，按 id 合并去重） -->
       <div class="search" role="search">
-        <svg class="icon icon--sm search__icon" aria-hidden="true">
-          <use href="#i-search"></use>
-        </svg>
+        <svg class="icon icon--sm search__icon"><use href="#i-search"></use></svg>
         <label class="visually-hidden" for="global-search">全局搜索</label>
         <input class="search__input" id="global-search" type="search"
                placeholder="搜索题干、答案或标签…" autocomplete="off"
-               data-action="search">
+               v-model="tableSearch"
+               @input="onSearchInput"
+               @keydown.enter="go('questions')">
         <kbd class="search__kbd" aria-hidden="true">Ctrl K</kbd>
       </div>
 
       <span class="topbar__spacer"></span>
 
-      <!-- 操作按钮 + 通知 + 用户菜单 -->
       <div class="topbar__actions">
-        <button class="btn btn--secondary" type="button" data-action="export-pdf">
-          <svg class="icon icon--sm" aria-hidden="true"><use href="#i-download"></use></svg>
+        <button class="btn btn--secondary" type="button"
+                aria-label="导出 PDF" @click="openExport">
+          <svg class="icon icon--sm"><use href="#i-download"></use></svg>
           <span class="btn__label">导出 PDF</span>
         </button>
 
-        <button class="btn btn--primary" type="button" data-action="new-question">
-          <svg class="icon icon--sm" aria-hidden="true"><use href="#i-plus"></use></svg>
+        <button class="btn btn--primary" type="button"
+                aria-label="新增题目" @click="openQuestionEditor()">
+          <svg class="icon icon--sm"><use href="#i-plus"></use></svg>
           <span class="btn__label">新增题目</span>
         </button>
 
-        <!-- 通知铃铛：数字角标 >99 显示 99+ -->
+        <!-- 通知铃铛 -->
         <div class="notif">
           <button class="icon-btn bell" type="button" id="btn-bell"
                   title="通知" aria-label="通知" aria-haspopup="dialog"
-                  aria-expanded="false" aria-controls="notif-panel">
-            <svg class="icon icon--lg" aria-hidden="true"><use href="#i-bell"></use></svg>
-            <span class="badge bell__badge" data-bind="notif-badge" hidden>0</span>
-            <span class="dot bell__badge" data-bind="notif-dot" hidden></span>
+                  :aria-expanded="notifOpen ? 'true' : 'false'"
+                  aria-controls="notif-panel"
+                  @click="toggleNotif">
+            <svg class="icon icon--lg"><use href="#i-bell"></use></svg>
+            <span v-if="reviewCount > 99" class="badge bell__badge">99+</span>
+            <span v-else-if="reviewCount > 0" class="badge bell__badge">{{ reviewCount }}</span>
+            <span v-else-if="hasStarredDue" class="dot bell__badge"></span>
           </button>
 
-          <!-- 通知面板：360px × 最多 480px，可滚动；复习视图内嵌，不跳页 -->
-          <section class="dropdown notif__panel" id="notif-panel" role="dialog"
-                   aria-label="通知" hidden>
+          <!-- 通知面板：宽 360 / 最高 480，可滚动 -->
+          <section v-if="notifOpen" class="dropdown notif__panel" id="notif-panel"
+                   role="dialog" aria-label="通知">
             <div class="notif__header">
               <h2 class="notif__title">待复习</h2>
-              <button class="icon-btn" type="button" id="btn-bell-close"
-                      title="关闭" aria-label="关闭通知面板" style="width:28px;height:28px">
-                <svg class="icon icon--sm" aria-hidden="true"><use href="#i-close"></use></svg>
+              <button class="icon-btn" type="button" title="关闭"
+                      aria-label="关闭通知面板" style="width:28px;height:28px"
+                      @click="notifOpen = false">
+                <svg class="icon icon--sm"><use href="#i-close"></use></svg>
               </button>
             </div>
 
-            <!-- 通知列表由 js/app.js 依据 GET /review/today 渲染 -->
-            <div class="notif__list" id="notif-list">
-              <!--
-                单条通知展开的示例结构：点击列表项后在面板内直接展开复习视图，
-                不跳页（AGENTS.md 4.3 / ui-design 5.4）。
-                题干、图片、标签、答案、打勾与上一题/下一题都由 js/app.js 填充。
-              -->
-              <div class="notif__item is-unread">
-                <div class="notif__item-head">
-                  <span class="notif__item-title">例题：极限的夹逼准则</span>
-                  <span class="notif__item-time">今天</span>
-                </div>
-                <p class="notif__item-summary">求 lim(x→0) x·sin(1/x) 的值。</p>
-
-                <!-- 面板内嵌复习视图（不跳页、不遮挡内容） -->
-                <div class="notif__review">
-                  <div class="notif__item-actions">
-                    <button class="btn btn--secondary btn--sm" type="button"
-                            data-action="toggle-answer" aria-expanded="false">
-                      展开答案
-                    </button>
-                    <button class="btn btn--primary btn--sm" type="button"
-                            data-action="check">
-                      <svg class="icon icon--sm" aria-hidden="true">
-                        <use href="#i-check"></use>
-                      </svg>
-                      打勾
-                    </button>
-                    <button class="btn btn--text btn--sm" type="button"
-                            data-action="next-question">
-                      下一题
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div class="empty-state" data-empty="notif" hidden>
-                <svg class="icon icon--lg empty-state__art" aria-hidden="true"
-                     style="width:48px;height:48px">
+            <div class="notif__list">
+              <!-- 空状态 -->
+              <div v-if="!reviewQueue.length" class="empty-state">
+                <svg class="icon empty-state__art" style="width:48px;height:48px">
                   <use href="#i-check"></use>
                 </svg>
                 <span class="empty-state__title">今日没有待复习题目</span>
                 <span class="text-aux">到期的题目会自动出现在这里</span>
               </div>
+
+              <!-- 列表项：点击在面板内展开复习视图，不跳页 -->
+              <div v-for="(item, index) in reviewQueue" :key="item.question_id"
+                   class="notif__item"
+                   :class="{ 'is-unread': activeReviewId === item.question_id }">
+                <div class="notif__item-head" @click="expandInPanel(item)">
+                  <span class="notif__item-title">{{ item.stem || '（无题干）' }}</span>
+                  <span class="notif__item-time">
+                    <template v-if="item.is_overdue">{{ item.overdue_days }} 天前</template>
+                    <template v-else>今天</template>
+                  </span>
+                </div>
+
+                <div class="notif__item-tags">
+                  <span v-if="item.is_starred" class="tag tag--star">
+                    <svg class="icon icon--sm"><use href="#i-star"></use></svg>重点
+                  </span>
+                  <span v-if="item.is_backlog" class="tag tag--backlog">积压</span>
+                  <span v-else-if="item.is_overdue" class="tag tag--overdue">逾期</span>
+                  <span v-for="t in item.tags" :key="t.id" class="tag">{{ t.name }}</span>
+                </div>
+
+                <!-- 内嵌复习视图 -->
+                <div v-if="activeReviewId === item.question_id" class="notif__review">
+                  <div v-if="item.images && item.images.length" class="review__images">
+                    <img v-for="img in item.images" :key="img.id" :src="img.url"
+                         :alt="'题目图片'" @click="previewImage = img.url">
+                  </div>
+                  <p v-if="item.stem" class="review__stem">{{ item.stem }}</p>
+
+                  <button class="btn btn--text btn--sm" type="button"
+                          :aria-expanded="panelAnswerOpen ? 'true' : 'false'"
+                          @click="panelAnswerOpen = !panelAnswerOpen">
+                    {{ panelAnswerOpen ? '收起答案' : '展开答案' }}
+                  </button>
+                  <p v-if="panelAnswerOpen" class="review__answer">
+                    {{ item.answer || '（未填写答案）' }}
+                  </p>
+
+                  <div class="notif__item-actions">
+                    <button class="btn btn--primary btn--sm" type="button"
+                            @click="checkFromPanel(item)">
+                      <svg class="icon icon--sm"><use href="#i-check"></use></svg>打勾
+                    </button>
+                    <button class="btn btn--secondary btn--sm" type="button"
+                            :disabled="index === 0" @click="stepPanelReview(-1)">
+                      上一题
+                    </button>
+                    <button class="btn btn--secondary btn--sm" type="button"
+                            :disabled="index >= reviewQueue.length - 1"
+                            @click="stepPanelReview(1)">
+                      下一题
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div class="notif__footer">
-              <a class="btn btn--text" href="#/review">查看全部今日复习</a>
+              <a class="btn btn--text" href="#/review" @click.prevent="go('review')">
+                查看全部今日复习
+              </a>
             </div>
           </section>
         </div>
 
         <!-- 用户菜单 -->
         <div class="notif">
-          <button class="user-menu" type="button" id="btn-user"
-                  aria-haspopup="menu" aria-expanded="false" aria-controls="user-menu">
+          <button class="user-menu" type="button" aria-haspopup="menu"
+                  :aria-expanded="userMenuOpen ? 'true' : 'false'"
+                  aria-controls="user-menu" @click="userMenuOpen = !userMenuOpen">
             <span class="avatar avatar--sm" aria-hidden="true">本</span>
             <span class="user-menu__name">本地用户</span>
-            <svg class="icon icon--sm" aria-hidden="true"><use href="#i-chevron-down"></use></svg>
+            <svg class="icon icon--sm"><use href="#i-chevron-down"></use></svg>
           </button>
 
-          <div class="dropdown dropdown--menu" id="user-menu" role="menu" hidden>
+          <div v-if="userMenuOpen" class="dropdown dropdown--menu" id="user-menu" role="menu">
             <button class="dropdown__item" type="button" role="menuitem"
-                    data-action="go-settings">
-              <svg class="icon icon--sm" aria-hidden="true"><use href="#i-settings"></use></svg>
-              设置
+                    @click="go('settings'); userMenuOpen = false">
+              <svg class="icon icon--sm"><use href="#i-settings"></use></svg>设置
             </button>
             <button class="dropdown__item" type="button" role="menuitem"
-                    data-action="backup-db">
-              <svg class="icon icon--sm" aria-hidden="true"><use href="#i-inbox"></use></svg>
-              备份数据库
+                    @click="go('about-data'); userMenuOpen = false">
+              <svg class="icon icon--sm"><use href="#i-database"></use></svg>数据说明
             </button>
             <div class="dropdown__divider" role="separator"></div>
             <button class="dropdown__item" type="button" role="menuitem" disabled>
-              <svg class="icon icon--sm" aria-hidden="true"><use href="#i-user"></use></svg>
+              <svg class="icon icon--sm"><use href="#i-user"></use></svg>
               纯本地运行 · 无需登录
             </button>
           </div>
@@ -366,96 +320,677 @@
       </div>
     </header>
 
-    <!-- ---------- 主内容区（自适应宽度）---------- -->
-    <main class="main" id="main">
+    <!-- ===================== 主内容区 ===================== -->
+    <main class="main">
       <div class="main__inner">
 
-        <!-- 页面标题区：标题 + 面包屑 + 页面级操作 -->
         <div class="page-header">
           <div>
-            <h1 class="page-title" data-bind="page-title">首页概览</h1>
+            <h1 class="page-title">{{ pageTitle }}</h1>
             <nav class="breadcrumb" aria-label="面包屑">
-              <span class="breadcrumb__current" data-bind="crumb">首页</span>
+              <template v-for="(crumb, i) in breadcrumbs" :key="i">
+                <span v-if="i > 0" class="breadcrumb__sep">/</span>
+                <a v-if="i < breadcrumbs.length - 1" href="#"
+                   @click.prevent="crumb.go && crumb.go()">{{ crumb.label }}</a>
+                <span v-else class="breadcrumb__current">{{ crumb.label }}</span>
+              </template>
             </nav>
           </div>
           <div class="page-actions">
             <button class="btn btn--secondary btn--sm" type="button"
-                    data-action="refresh" aria-label="刷新">
-              <svg class="icon icon--sm" aria-hidden="true"><use href="#i-review"></use></svg>
+                    aria-label="刷新" @click="refreshCurrent">
+              <svg class="icon icon--sm"><use href="#i-review"></use></svg>
               <span class="btn__label">刷新</span>
             </button>
             <button class="btn btn--primary btn--sm" type="button"
-                    data-action="new-question" aria-label="新增题目">
-              <svg class="icon icon--sm" aria-hidden="true"><use href="#i-plus"></use></svg>
+                    aria-label="新增题目" @click="openQuestionEditor()">
+              <svg class="icon icon--sm"><use href="#i-plus"></use></svg>
               <span class="btn__label">新增题目</span>
             </button>
           </div>
         </div>
 
-        <!--
-          统计卡片：结构示意。数值在接入 js/app.js 后由接口填充，
-          不在此写死任何业务数字。
-        -->
-        <section class="stat-grid" aria-label="学习统计">
-          <article class="card card--hoverable">
-            <p class="stat-card__label">错题总数</p>
-            <p class="stat-card__value num" data-bind="stat-total">—</p>
-          </article>
-          <article class="card card--hoverable">
-            <p class="stat-card__label">今日待复习</p>
-            <p class="stat-card__value num" data-bind="stat-due">—</p>
-          </article>
-          <article class="card card--hoverable">
-            <p class="stat-card__label">已掌握</p>
-            <p class="stat-card__value num" data-bind="stat-mastered">—</p>
-          </article>
-          <article class="card card--hoverable">
-            <p class="stat-card__label">积压（≥14 天）</p>
-            <p class="stat-card__value num" data-bind="stat-backlog">—</p>
-          </article>
-        </section>
+        <!-- 加载中 -->
+        <div v-if="loading" class="placeholder">加载中…</div>
 
-        <!-- 数据表格区：占主要垂直空间 -->
-        <section class="table-area" aria-label="最近错题">
-          <div class="empty-state">
-            <svg class="icon empty-state__art" aria-hidden="true">
-              <use href="#i-questions"></use>
-            </svg>
-            <span class="empty-state__title">还没有错题</span>
-            <span class="text-aux">新建学科与大类后，就可以录入第一道错题了</span>
-            <button class="btn btn--primary" type="button" data-action="new-question"
-                    style="margin-top:8px">
-              <svg class="icon icon--sm" aria-hidden="true"><use href="#i-plus"></use></svg>
-              新增题目
+        <!-- 出错 -->
+        <div v-else-if="loadError" class="placeholder placeholder--error">
+          {{ loadError }}
+          <button class="btn btn--secondary btn--sm" type="button" @click="refreshCurrent">
+            重试
+          </button>
+        </div>
+
+        <!-- ============ 首页 ============ -->
+        <template v-else-if="currentPage === 'home'">
+          <section class="stat-grid" aria-label="学习统计">
+            <article class="card card--hoverable">
+              <p class="stat-card__label">错题总数</p>
+              <p class="stat-card__value num">{{ stats.total }}</p>
+            </article>
+            <article class="card card--hoverable">
+              <p class="stat-card__label">今日待复习</p>
+              <p class="stat-card__value num">{{ stats.due }}</p>
+            </article>
+            <article class="card card--hoverable">
+              <p class="stat-card__label">已掌握</p>
+              <p class="stat-card__value num">{{ stats.mastered }}</p>
+            </article>
+            <article class="card card--hoverable">
+              <p class="stat-card__label">仍易错</p>
+              <p class="stat-card__value num">{{ stats.wrong }}</p>
+            </article>
+          </section>
+
+          <section class="card">
+            <h2 class="section-title" style="margin-bottom:var(--sp-element)">
+              今日复习推荐
+            </h2>
+            <div v-if="!reviewQueue.length" class="empty-state">
+              <svg class="icon empty-state__art"><use href="#i-check"></use></svg>
+              <span class="empty-state__title">今日没有待复习题目</span>
+            </div>
+            <ul v-else class="rec-list">
+              <li v-for="item in reviewQueue.slice(0, 5)" :key="item.question_id"
+                  class="rec-item" @click="go('review')">
+                <span class="rec-item__stem">{{ item.stem || '（无题干）' }}</span>
+                <span class="text-aux">{{ item.folder_name }}</span>
+                <span v-if="item.is_overdue" class="tag tag--overdue">
+                  逾期 {{ item.overdue_days }} 天
+                </span>
+              </li>
+            </ul>
+          </section>
+
+          <section class="card">
+            <h2 class="section-title" style="margin-bottom:var(--sp-element)">快捷操作</h2>
+            <div class="quick-actions">
+              <button class="btn btn--primary" type="button" @click="openQuestionEditor()">
+                <svg class="icon icon--sm"><use href="#i-plus"></use></svg>快速录入
+              </button>
+              <button class="btn btn--secondary" type="button" @click="go('review')">
+                <svg class="icon icon--sm"><use href="#i-review"></use></svg>今日复习
+              </button>
+              <button class="btn btn--secondary" type="button" @click="go('notes')">
+                <svg class="icon icon--sm"><use href="#i-notes"></use></svg>查看笔记
+              </button>
+            </div>
+          </section>
+        </template>
+
+        <!-- ============ 题目管理 ============ -->
+        <template v-else-if="currentPage === 'questions'">
+          <div class="toolbar">
+            <div class="segmented" role="tablist" aria-label="筛选">
+              <button v-for="f in filterOptions" :key="f.value" type="button"
+                      class="segmented__item"
+                      :class="{ 'is-active': filterType === f.value }"
+                      :aria-selected="filterType === f.value ? 'true' : 'false'"
+                      role="tab" @click="filterType = f.value">
+                {{ f.label }}
+              </button>
+            </div>
+            <span class="topbar__spacer"></span>
+            <span class="text-aux">
+              共 <strong class="num">{{ filteredQuestions.length }}</strong> 题
+              <template v-if="currentFolderName">· {{ currentFolderName }}</template>
+            </span>
+            <button v-if="currentFolderId" class="btn btn--text btn--sm" type="button"
+                    @click="currentFolderId = null">
+              清除文件夹筛选
             </button>
           </div>
-        </section>
 
-        <!--
-          本步只交付骨架与设计系统（index.html + css/style.css）。
-          尚未实现：js/api.js、js/app.js。
-          下面的提示仅用于说明后续接入点，接入后应删除此块。
-        -->
-        <p class="placeholder">
-          骨架已就绪。动态数据接入点：<code>js/api.js</code>（封装 API 调用）与
-          <code>js/app.js</code>（用 <code>[data-bind]</code>、<code>[data-action]</code>
-          钩子绑定本页元素）。接口已全部可用：<code>/folders</code>、
-          <code>/questions</code>、<code>/tags</code>、<code>/review</code>、
-          <code>/notes</code>、<code>/settings</code>。
-        </p>
+          <section class="table-area">
+            <div v-if="!filteredQuestions.length" class="empty-state">
+              <svg class="icon empty-state__art"><use href="#i-questions"></use></svg>
+              <span class="empty-state__title">
+                {{ questions.length ? '没有符合条件的题目' : '还没有错题' }}
+              </span>
+              <span class="text-aux">
+                {{ questions.length ? '换个筛选条件试试' : '新建学科与大类后，就可以录入第一道错题了' }}
+              </span>
+              <button v-if="!questions.length" class="btn btn--primary" type="button"
+                      style="margin-top:8px" @click="openQuestionEditor()">
+                <svg class="icon icon--sm"><use href="#i-plus"></use></svg>新增题目
+              </button>
+            </div>
+
+            <table v-else class="data-table data-table--cards">
+              <thead>
+                <tr>
+                  <th>题干预览</th>
+                  <th>所属文件夹</th>
+                  <th>标签</th>
+                  <th>重点</th>
+                  <th>掌握状态</th>
+                  <th>更新时间</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="q in filteredQuestions" :key="q.id">
+                  <td class="cell-stem" :data-label="'题干'">
+                    {{ q.stem || '（无题干，仅图片）' }}
+                  </td>
+                  <td :data-label="'文件夹'">{{ q.folder_name || '—' }}</td>
+                  <td :data-label="'标签'">
+                    <span v-for="t in q.tags" :key="t.id" class="tag">{{ t.name }}</span>
+                    <span v-if="!q.tags || !q.tags.length" class="text-faint">—</span>
+                  </td>
+                  <td :data-label="'重点'">
+                    <button class="icon-btn" type="button" style="width:28px;height:28px"
+                            :aria-label="q.is_starred ? '取消重点' : '标为重点'"
+                            @click="starQuestion(q, !q.is_starred)">
+                      <svg class="icon icon--sm star" :class="{ 'star--on': q.is_starred }">
+                        <use href="#i-star"></use>
+                      </svg>
+                    </button>
+                  </td>
+                  <td :data-label="'状态'">
+                    <span class="status"
+                          :class="q.mastery_status === 'mastered' ? 'status--won' : 'status--wrong'">
+                      <span class="status__dot"></span>
+                      {{ q.mastery_status === 'mastered' ? '已拿下' : '仍易错' }}
+                    </span>
+                  </td>
+                  <td :data-label="'更新时间'" class="text-aux num">{{ fmtDate(q.updated_at) }}</td>
+                  <td :data-label="'操作'">
+                    <div class="row-actions">
+                      <button class="btn btn--text btn--sm" type="button"
+                              @click="openQuestionEditor(q)">编辑</button>
+                      <button class="btn btn--text btn--sm" type="button"
+                              @click="checkReview(q)">打勾</button>
+                      <button class="btn btn--text btn--sm text-danger" type="button"
+                              @click="removeQuestion(q)">删除</button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+        </template>
+
+        <!-- ============ 今日复习 ============ -->
+        <template v-else-if="currentPage === 'review'">
+          <div class="review-progress card">
+            <div class="review-progress__head">
+              <span class="card-title">今日复习进度</span>
+              <span class="text-aux num">
+                已完成 {{ reviewDoneToday }} / {{ reviewDoneToday + reviewQueue.length }}
+              </span>
+            </div>
+            <div class="progress">
+              <div class="progress__bar" :style="{ width: reviewPercent + '%' }"></div>
+            </div>
+          </div>
+
+          <section v-if="!reviewQueue.length" class="card">
+            <div class="empty-state">
+              <svg class="icon empty-state__art"><use href="#i-check"></use></svg>
+              <span class="empty-state__title">今日复习已全部完成</span>
+              <span class="text-aux">共完成 {{ reviewDoneToday }} 题，休息一下吧</span>
+              <button class="btn btn--secondary" type="button" style="margin-top:8px"
+                      @click="go('home')">返回首页</button>
+            </div>
+          </section>
+
+          <section v-else class="review-list">
+            <article v-for="(item, index) in reviewQueue" :key="item.question_id"
+                     class="card review-card">
+              <div class="review-card__head">
+                <span class="text-aux num">第 {{ index + 1 }} / {{ reviewQueue.length }} 题</span>
+                <span class="review-card__meta">
+                  <span v-if="item.folder_name" class="text-aux">{{ item.folder_name }}</span>
+                  <span v-if="item.is_starred" class="tag tag--star">
+                    <svg class="icon icon--sm"><use href="#i-star"></use></svg>重点
+                  </span>
+                  <span v-if="item.is_backlog" class="tag tag--backlog">积压</span>
+                  <span v-else-if="item.is_overdue" class="tag tag--overdue">
+                    逾期 {{ item.overdue_days }} 天
+                  </span>
+                </span>
+              </div>
+
+              <div v-if="item.images && item.images.length" class="review__images">
+                <img v-for="img in item.images" :key="img.id" :src="img.url"
+                     alt="题目图片" @click="previewImage = img.url">
+              </div>
+
+              <p class="review__stem">{{ item.stem || '（无题干）' }}</p>
+
+              <div class="notif__item-tags">
+                <span v-for="t in item.tags" :key="t.id" class="tag">{{ t.name }}</span>
+              </div>
+
+              <button class="btn btn--text btn--sm" type="button"
+                      :aria-expanded="answersOpen[item.question_id] ? 'true' : 'false'"
+                      @click="toggleAnswer(item.question_id)">
+                {{ answersOpen[item.question_id] ? '收起答案' : '显示答案' }}
+              </button>
+              <p v-if="answersOpen[item.question_id]" class="review__answer">
+                {{ item.answer || '（未填写答案）' }}
+              </p>
+
+              <div class="review-card__actions">
+                <button class="btn btn--danger btn--sm" type="button"
+                        @click="checkReview(item, 0)">完全不会</button>
+                <button class="btn btn--secondary btn--sm" type="button"
+                        @click="checkReview(item, 1)">有点模糊</button>
+                <button class="btn btn--secondary btn--sm" type="button"
+                        @click="checkReview(item, 2)">基本掌握</button>
+                <button class="btn btn--primary btn--sm" type="button"
+                        @click="checkReview(item, 3)">已掌握</button>
+              </div>
+            </article>
+          </section>
+        </template>
+
+        <!-- ============ 记事本 ============ -->
+        <template v-else-if="currentPage === 'notes'">
+          <div v-if="draftPrompt.show" class="draft-banner" role="status">
+            <svg class="icon icon--sm"><use href="#i-alert"></use></svg>
+            <span>检测到上次未保存的草稿（{{ draftPrompt.label }}）</span>
+            <span class="topbar__spacer"></span>
+            <button class="btn btn--primary btn--sm" type="button"
+                    @click="restoreDraft">恢复</button>
+            <button class="btn btn--secondary btn--sm" type="button"
+                    @click="discardDraft">忽略</button>
+          </div>
+
+          <div class="notes-layout">
+            <!-- 左侧列表 300px -->
+            <aside class="notes-list card">
+              <div class="notes-list__head">
+                <input class="input" type="search" v-model="noteSearch"
+                       placeholder="搜索笔记…" aria-label="搜索笔记" @input="onNoteSearchInput">
+                <button class="btn btn--primary btn--sm" type="button"
+                        style="margin-top:8px;width:100%" @click="newNote">
+                  <svg class="icon icon--sm"><use href="#i-plus"></use></svg>新建笔记
+                </button>
+              </div>
+              <ul class="notes-list__items">
+                <li v-if="!notesView.length" class="empty-state" style="padding:24px 8px">
+                  <span class="text-aux">暂无笔记</span>
+                </li>
+                <li v-for="n in notesView" :key="n.id" class="notes-item"
+                    :class="{ 'is-active': noteForm.id === n.id }"
+                    @click="selectNote(n.id)">
+                  <span class="notes-item__title">{{ n.title || '（无标题）' }}</span>
+                  <span class="notes-item__preview">{{ n.content || '（空）' }}</span>
+                  <span class="notes-item__time num">{{ fmtDate(n.updated_at) }}</span>
+                </li>
+              </ul>
+            </aside>
+
+            <!-- 右侧编辑器 -->
+            <section class="notes-editor card">
+              <div class="notes-editor__head">
+                <span class="text-aux" aria-live="polite">{{ draftStatusText }}</span>
+                <span class="topbar__spacer"></span>
+                <button v-if="noteForm.id" class="btn btn--text btn--sm text-danger"
+                        type="button" @click="removeNote(noteForm.id)">删除</button>
+                <button class="btn btn--primary btn--sm" type="button"
+                        :disabled="noteSaving" @click="saveNote">
+                  {{ noteSaving ? '保存中…' : '保存' }}
+                </button>
+              </div>
+
+              <input class="input notes-editor__title" type="text"
+                     v-model="noteForm.title" placeholder="标题"
+                     aria-label="笔记标题" @input="onNoteEdit">
+              <textarea class="input notes-editor__content" v-model="noteForm.content"
+                        placeholder="内容…（支持 Markdown 语法，本步暂只做纯文本编辑）"
+                        aria-label="笔记内容" @input="onNoteEdit"></textarea>
+              <p class="text-aux" style="margin-top:8px">
+                草稿每 500ms 自动存入 localStorage（key：
+                <code>{{ noteForm.id ? 'draft_note_' + noteForm.id : 'draft_note_new' }}</code>）。
+              </p>
+            </section>
+          </div>
+        </template>
+
+        <!-- ============ 统计分析 ============ -->
+        <template v-else-if="currentPage === 'stats'">
+          <section class="stat-grid">
+            <article class="card">
+              <p class="stat-card__label">错题总数</p>
+              <p class="stat-card__value num">{{ stats.total }}</p>
+            </article>
+            <article class="card">
+              <p class="stat-card__label">今日待复习</p>
+              <p class="stat-card__value num">{{ stats.due }}</p>
+            </article>
+            <article class="card">
+              <p class="stat-card__label">掌握率</p>
+              <p class="stat-card__value num">{{ masteryRate }}%</p>
+            </article>
+            <article class="card">
+              <p class="stat-card__label">连续补卡（天）</p>
+              <p class="stat-card__value num">{{ backfillStats.consecutive_days }}</p>
+            </article>
+          </section>
+
+          <section class="card">
+            <h2 class="section-title" style="margin-bottom:var(--sp-element)">
+              学科分布
+            </h2>
+            <div v-if="!folderTree.length" class="text-aux">暂无数据</div>
+            <ul v-else class="dist-list">
+              <li v-for="s in folderTree" :key="s.id" class="dist-item">
+                <span class="dist-item__name">{{ s.name }}</span>
+                <span class="progress dist-item__bar">
+                  <span class="progress__bar"
+                        :style="{ width: distPercent(s.question_count) + '%' }"></span>
+                </span>
+                <span class="dist-item__value num">{{ s.question_count || 0 }}</span>
+              </li>
+            </ul>
+          </section>
+
+          <section class="card">
+            <h2 class="section-title" style="margin-bottom:var(--sp-element)">
+              高频标签（词云）
+            </h2>
+            <div v-if="!tags.length" class="text-aux">暂无标签</div>
+            <div v-else class="tag-cloud">
+              <span v-for="t in tags.slice(0, 30)" :key="t.id" class="tag tag--pill"
+                    :style="{ fontSize: cloudSize(t.question_count) + 'px' }">
+                {{ t.name }}<span class="text-faint num">{{ t.question_count }}</span>
+              </span>
+            </div>
+          </section>
+
+          <section class="card">
+            <h2 class="section-title" style="margin-bottom:var(--sp-element)">补卡统计</h2>
+            <ul class="kv-list">
+              <li><span>今日补卡数量</span><span class="num">{{ backfillStats.today_backfill_count }}</span></li>
+              <li><span>连续补卡天数</span><span class="num">{{ backfillStats.consecutive_days }}</span></li>
+              <li><span>当前积压（≥14 天）</span><span class="num">{{ backfillStats.backlog_count }}</span></li>
+            </ul>
+            <button class="btn btn--secondary" type="button" style="margin-top:var(--sp-element)"
+                    :disabled="backfillBusy" @click="doResetBackfill(false)">
+              {{ backfillBusy ? '处理中…' : '一键重置积压' }}
+            </button>
+          </section>
+        </template>
+
+        <!-- ============ 设置 ============ -->
+        <template v-else-if="currentPage === 'settings'">
+          <section class="card">
+            <h2 class="section-title">记忆曲线间隔序列</h2>
+            <p class="text-aux" style="margin:6px 0 var(--sp-element)">
+              四个阶段的间隔天数，必须严格递增。首次复习起点为第一个值。
+            </p>
+            <div class="intervals">
+              <label v-for="(d, i) in settingsForm.intervals" :key="i" class="interval-field">
+                <span class="text-aux">阶段 {{ i }}</span>
+                <input class="input" type="number" min="1" max="365" v-model.number="settingsForm.intervals[i]">
+                <span class="text-aux">天</span>
+              </label>
+            </div>
+          </section>
+
+          <section class="card">
+            <h2 class="section-title">复习设置</h2>
+            <div class="form-row">
+              <label class="form-row__label" for="set-limit">每日补卡上限</label>
+              <input class="input" id="set-limit" type="number" min="0" max="500"
+                     v-model.number="settingsForm.backfill_limit">
+              <span class="text-aux">今日队列最多补这么多逾期题</span>
+            </div>
+            <div class="form-row">
+              <label class="form-row__label" for="set-days">积压阈值（天）</label>
+              <input class="input" id="set-days" type="number" min="1" max="365"
+                     v-model.number="settingsForm.backfill_reset_days">
+              <span class="text-aux">逾期超过该天数进入积压区，并参与一键重置</span>
+            </div>
+          </section>
+
+          <div class="settings-actions">
+            <button class="btn btn--primary" type="button"
+                    :disabled="settingsSaving" @click="saveSettings">
+              {{ settingsSaving ? '保存中…' : '保存设置' }}
+            </button>
+            <button class="btn btn--secondary" type="button"
+                    :disabled="settingsSaving" @click="resetSettingsToDefault">
+              恢复默认值
+            </button>
+            <span class="text-aux">「恢复默认值」会把三项配置都置为默认（回退到内置值）</span>
+          </div>
+        </template>
+
+        <!-- ============ 关于数据 / 数据说明 ============ -->
+        <template v-else-if="currentPage === 'about-data'">
+          <section class="card">
+            <h2 class="section-title">数据存放位置</h2>
+            <ul class="kv-list">
+              <li><span>数据库文件</span><span class="mono">{{ health.db_path || '—' }}</span></li>
+              <li><span>文件是否存在</span>
+                <span>{{ health.db_exists ? '是' : '否' }}</span></li>
+              <li><span>服务状态</span><span>{{ health.status || '—' }}</span></li>
+            </ul>
+          </section>
+
+          <section class="card">
+            <h2 class="section-title">说明</h2>
+            <ul class="bullet-list">
+              <li>本应用<strong>纯本地单机运行</strong>，不联网、不上传任何数据。</li>
+              <li>无多用户、无登录鉴权；数据只保存在上面这个文件里。</li>
+              <li>图片存放在项目的 <code>uploads/</code> 目录，按年月日分片。</li>
+              <li>备份方式：直接复制数据库文件与 <code>uploads/</code> 目录即可。</li>
+              <li>浏览器 localStorage 只保存未提交的表单草稿，不含业务数据。</li>
+            </ul>
+          </section>
+
+          <section class="card">
+            <h2 class="section-title">草稿占用</h2>
+            <div v-if="!draftKeysInStorage.length" class="text-aux">当前没有未提交的草稿。</div>
+            <ul v-else class="kv-list">
+              <li v-for="k in draftKeysInStorage" :key="k"><span class="mono">{{ k }}</span>
+                <button class="btn btn--text btn--sm text-danger" type="button"
+                        @click="clearDraftKey(k)">清除</button></li>
+            </ul>
+          </section>
+        </template>
 
       </div>
     </main>
+
+    <!-- ===================== 题目编辑弹窗 ===================== -->
+    <div v-if="questionEditor.open" class="modal-mask" @click.self="closeQuestionEditor">
+      <div class="modal" role="dialog" aria-modal="true" aria-label="题目编辑">
+        <div class="modal__head">
+          <h2 class="card-title">{{ questionEditor.id ? '编辑题目' : '新增题目' }}</h2>
+          <button class="icon-btn" type="button" aria-label="关闭"
+                  @click="closeQuestionEditor">
+            <svg class="icon icon--sm"><use href="#i-close"></use></svg>
+          </button>
+        </div>
+
+        <div class="modal__body">
+          <div v-if="questionEditor.draftNotice" class="draft-banner draft-banner--inline">
+            <svg class="icon icon--sm"><use href="#i-alert"></use></svg>
+            <span>{{ questionEditor.draftNotice }}</span>
+            <span class="topbar__spacer"></span>
+            <button class="btn btn--text btn--sm" type="button"
+                    @click="discardQuestionDraft">忽略草稿</button>
+          </div>
+
+          <div class="form-row form-row--block">
+            <label class="form-row__label" for="q-folder">所属大类 *</label>
+            <select class="input" id="q-folder" v-model.number="questionForm.folder_id">
+              <option :value="null" disabled>请选择大类</option>
+              <option v-for="c in categoryOptions" :key="c.id" :value="c.id">
+                {{ c.path }}
+              </option>
+            </select>
+          </div>
+
+          <div class="form-row form-row--block">
+            <label class="form-row__label" for="q-stem">题干</label>
+            <textarea class="input" id="q-stem" rows="3"
+                      v-model="questionForm.stem"
+                      placeholder="可留空（纯图片题目）"
+                      @input="onQuestionEdit"></textarea>
+          </div>
+
+          <div class="form-row form-row--block">
+            <label class="form-row__label" for="q-answer">答案</label>
+            <textarea class="input" id="q-answer" rows="3"
+                      v-model="questionForm.answer"
+                      placeholder="可留空"
+                      @input="onQuestionEdit"></textarea>
+          </div>
+
+          <div class="form-row form-row--block">
+            <label class="form-row__label" for="q-tags">标签（回车创建）</label>
+            <div class="tag-input">
+              <span v-for="(t, i) in questionForm.tags" :key="t" class="tag">
+                {{ t }}
+                <button class="tag__remove" type="button" :aria-label="'移除标签 ' + t"
+                        @click="questionForm.tags.splice(i, 1); onQuestionEdit()">×</button>
+              </span>
+              <input class="tag-input__field" id="q-tags" type="text"
+                     v-model="tagDraft" placeholder="输入后回车"
+                     @keydown.enter.prevent="addTag"
+                     @input="onTagSuggest">
+            </div>
+            <ul v-if="tagSuggestions.length" class="tag-suggest">
+              <li v-for="t in tagSuggestions" :key="t.id">
+                <button class="tag-suggest__item" type="button" @click="pickTag(t.name)">
+                  {{ t.name }}<span class="text-faint num">{{ t.question_count }}</span>
+                </button>
+              </li>
+            </ul>
+          </div>
+
+          <div class="form-row form-row--block">
+            <label class="form-row__label">重点</label>
+            <label class="checkbox">
+              <input type="checkbox" v-model="questionForm.is_starred" @change="onQuestionEdit">
+              标为重点题
+            </label>
+          </div>
+
+          <p class="text-aux" style="margin-top:8px">
+            输入内容每 500ms 自动存草稿（key：
+            <code>{{ questionForm.id ? 'draft_question_' + questionForm.id : 'draft_question_new' }}</code>）。
+            {{ questionDraftStatus }}
+          </p>
+        </div>
+
+        <div class="modal__foot">
+          <button class="btn btn--secondary" type="button" @click="closeQuestionEditor">
+            取消
+          </button>
+          <button class="btn btn--secondary" type="button"
+                  :disabled="questionSaving" @click="saveQuestion(true)">
+            保存并继续添加
+          </button>
+          <button class="btn btn--primary" type="button"
+                  :disabled="questionSaving" @click="saveQuestion(false)">
+            {{ questionSaving ? '保存中…' : '保存' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================== 导出 PDF 弹窗 ===================== -->
+    <div v-if="exportDialog.open" class="modal-mask" @click.self="exportDialog.open = false">
+      <div class="modal" role="dialog" aria-modal="true" aria-label="导出 PDF">
+        <div class="modal__head">
+          <h2 class="card-title">导出 PDF</h2>
+          <button class="icon-btn" type="button" aria-label="关闭"
+                  @click="exportDialog.open = false">
+            <svg class="icon icon--sm"><use href="#i-close"></use></svg>
+          </button>
+        </div>
+
+        <div class="modal__body">
+          <div class="form-row form-row--block">
+            <label class="form-row__label" for="ex-scope">导出范围</label>
+            <select class="input" id="ex-scope" v-model="exportForm.scope">
+              <option value="folder">按文件夹</option>
+              <option value="tags">按标签</option>
+              <option value="starred">仅重点</option>
+              <option value="review_queue">今日待复习</option>
+              <option value="manual">手动勾选</option>
+            </select>
+          </div>
+
+          <div v-if="exportForm.scope === 'folder'" class="form-row form-row--block">
+            <label class="form-row__label" for="ex-folder">选择大类</label>
+            <select class="input" id="ex-folder" v-model.number="exportForm.folder_id">
+              <option :value="null">全部题目</option>
+              <option v-for="c in categoryOptions" :key="c.id" :value="c.id">
+                {{ c.path }}
+              </option>
+            </select>
+          </div>
+
+          <div v-if="exportForm.scope === 'tags'" class="form-row form-row--block">
+            <label class="form-row__label">选择标签（可多选）</label>
+            <div class="tag-picker">
+              <label v-for="t in tags" :key="t.id" class="checkbox">
+                <input type="checkbox" :value="t.name" v-model="exportForm.tags">
+                {{ t.name }}<span class="text-faint num">{{ t.question_count }}</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-row form-row--block">
+            <label class="checkbox">
+              <input type="checkbox" v-model="exportForm.with_answer"> 包含答案
+            </label>
+            <label class="checkbox">
+              <input type="checkbox" v-model="exportForm.include_tags"> 显示标签
+            </label>
+          </div>
+
+          <p class="text-aux placeholder">
+            后端 <code>POST /export/pdf</code> 尚未实现。点击导出会返回错误提示，
+            等后端补齐后此弹窗无需改动。
+          </p>
+        </div>
+
+        <div class="modal__foot">
+          <button class="btn btn--secondary" type="button"
+                  @click="exportDialog.open = false">取消</button>
+          <button class="btn btn--primary" type="button"
+                  :disabled="exportDialog.busy" @click="doExport">
+            {{ exportDialog.busy ? '导出中…' : '导出' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 图片预览 -->
+    <div v-if="previewImage" class="modal-mask lightbox" @click.self="previewImage = null">
+      <img :src="previewImage" alt="图片预览" @click="previewImage = null">
+    </div>
+
+    <!--
+      Toast 容器必须在 #app 之内：放在挂载点外面 Vue 不会编译它，
+      模板语法会以 {{ }} 原样显示在页面上。
+      用 position: fixed 定位，因此嵌套位置不影响它的显示层级。
+    -->
+    <div class="toast-stack" aria-live="polite" aria-atomic="false">
+      <div v-for="t in toasts" :key="t.id" class="toast" :class="'toast--' + t.type">
+        <svg class="icon icon--sm toast__icon">
+          <use :href="t.type === 'success' ? '#i-check' : '#i-alert'"></use>
+        </svg>
+        <span class="toast__message">{{ t.message }}</span>
+        <button class="icon-btn" type="button" style="width:24px;height:24px"
+                aria-label="关闭提示" @click="dismissToast(t.id)">
+          <svg class="icon icon--sm"><use href="#i-close"></use></svg>
+        </button>
+      </div>
+    </div>
   </div>
 
-  <!-- Toast 反馈容器（成功 3s / 警告 5s / 错误手动关闭） -->
-  <div class="toast-stack" id="toast-stack" aria-live="polite" aria-atomic="false"></div>
-
-  <!--
-    js/api.js 与 js/app.js 尚未创建（本步只做骨架与设计系统）。
-    保留注释而非法引用，避免控制台出现 404；接入时取消注释即可。
-    <script src="js/api.js"></script>
-    <script src="js/app.js"></script>
-  -->
+  <script src="js/vendor/vue.global.prod.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/app.js"></script>
 </body>
 </html>

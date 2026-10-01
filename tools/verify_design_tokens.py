@@ -20,6 +20,7 @@ except Exception:
 ROOT = Path(__file__).resolve().parent.parent
 CSS = (ROOT / "app/static/css/style.css").read_text(encoding="utf-8")
 HTML = (ROOT / "app/static/index.html").read_text(encoding="utf-8")
+APP_JS = (ROOT / "app/static/js/app.js").read_text(encoding="utf-8")
 DOC = (ROOT / "docs/ui-design.md").read_text(encoding="utf-8")
 
 results: list[tuple[str, bool, str]] = []
@@ -142,9 +143,15 @@ def main() -> int:
                     CSS, re.S) is not None
           and re.search(r"\.nav__item\.is-active\s*\{[^}]*color:\s*var\(--c-sidebar-text-active\)",
                         CSS, re.S) is not None)
+    # 导航现在是 Vue 渲染的：HTML 里是 v-for + navItems，
+    # 断言改为"模板里有循环 + app.js 里定义了 6 项"，比数 data-nav 更贴合实现。
+    check("导航由 Vue 渲染（v-for navItems）",
+          "v-for=\"item in navItems\"" in HTML and "nav__item" in HTML)
     check("导航含 6 个功能入口",
           sum(1 for k in ("home", "questions", "review", "notes", "stats", "settings")
-              if f'data-nav="{k}"' in HTML) == 6)
+              if f"key: '{k}'" in APP_JS) == 6,
+          str([k for k in ("home", "questions", "review", "notes", "stats", "settings")
+               if f"key: '{k}'" in APP_JS]))
     check("文件夹树两级结构（tree__children）", "tree__children" in CSS and "tree__children" in HTML)
     check("箭头旋转 90° 过渡 250ms",
           re.search(r"--dur-tree:\s*250ms", CSS) is not None
@@ -160,11 +167,11 @@ def main() -> int:
     check("含搜索框", 'class="search__input"' in HTML)
     check("含 Ctrl/Cmd + K 快捷键提示", "Ctrl K" in HTML and "search__kbd" in CSS)
     check("含新增题目主按钮",
-          re.search(r'btn--primary[^>]*data-action="new-question"', HTML) is not None
-          or re.search(r'data-action="new-question"[^>]*', HTML) is not None)
-    check("含导出 PDF 次按钮", 'data-action="export-pdf"' in HTML)
+          '@click="openQuestionEditor()"' in HTML and "btn--primary" in HTML)
+    check("含导出 PDF 次按钮", '@click="openExport"' in HTML and "导出 PDF" in HTML)
     check("含通知铃铛 + 角标", "bell__badge" in HTML and ".badge" in CSS)
-    check("含用户菜单（头像 + 下拉）", 'id="btn-user"' in HTML and "user-menu" in CSS)
+    check("含用户菜单（头像 + 下拉）",
+          "user-menu" in HTML and "dropdown--menu" in HTML and "user-menu" in CSS)
 
     # ---------- 5.3 角标规则 ----------
     print("\n-- 5.3 状态标识 / 角标 --")
@@ -256,9 +263,16 @@ def main() -> int:
     html_no_comments = re.sub(r"<!--.*?-->", "", HTML, flags=re.S)
 
     check("index.html 引用 css/style.css", 'href="css/style.css"' in HTML)
-    check("未引用不存在的 js（避免控制台 404）",
-          not re.search(r"<script[^>]+src=", html_no_comments),
-          "js/api.js 与 js/app.js 尚未创建，接入点以注释保留")
+    # 现在真的引用了 js（不再是注释里的接入点），所以改成断言"引用的文件都存在"
+    script_srcs = re.findall(r'<script[^>]+src="([^"]+)"', html_no_comments)
+    check("引用的 js 文件都真实存在",
+          bool(script_srcs) and all(
+              (ROOT / "app/static" / s).is_file() for s in script_srcs),
+          ", ".join(script_srcs) or "没有引用任何 js")
+    check("脚本加载顺序为 vue -> api -> app",
+          [s.split("/")[-1] for s in script_srcs] ==
+          ["vue.global.prod.js", "api.js", "app.js"],
+          str(script_srcs))
     check("所有 <use href=\"#i-...\"> 都有对应 symbol 定义",
           set(re.findall(r'<use href="#(i-[a-z-]+)"', HTML))
           <= set(re.findall(r'<symbol id="(i-[a-z-]+)"', HTML)),
