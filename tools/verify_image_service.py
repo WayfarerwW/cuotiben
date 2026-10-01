@@ -317,10 +317,13 @@ def main() -> int:
                   f"HTTP {resp.status_code} {resp.text[:120]}")
             if resp.status_code == 201:
                 body = resp.json()
-                check("响应含 url/file_path/width/height/size",
+                check("响应含 id/url/file_path/width/height/size",
                       all(k in body for k in
-                          ("url", "file_path", "width", "height", "size")),
+                          ("id", "url", "file_path", "width", "height", "size")),
                       str(sorted(body.keys())))
+                check("返回 question_images 主键 id（供 DELETE 用）",
+                      isinstance(body["id"], int) and body["id"] > 0,
+                      f"id={body['id']}")
                 check("width=1080", body["width"] == 1080, f"{body['width']}")
                 check("height 等比（3024/4032*1080=810）", body["height"] == 810,
                       f"{body['height']}")
@@ -351,12 +354,56 @@ def main() -> int:
                     cat = folder_service.create_folder(db, "极限", parent_id=subj.id)
                     q = question_service.create_question(
                         db, folder_id=cat.id, stem="带图题",
-                        images=[body["file_path"]],
+                        images=[body["url"]],  # 故意传 URL 而非 file_path
                     )
                     img = q.images[0]
                     check("建题时自动读到图片宽高",
                           img.width == 1080 and img.height == 810 and img.size == body["size"],
                           f"{img.width}x{img.height} {img.size}B")
+                    check("建题复用上传时建的记录（不产生重复行）",
+                          img.id == body["id"],
+                          f"建题后 image.id={img.id}，上传返回 id={body['id']}")
+
+                # ---------- DELETE /upload/image/{id} ----------
+                print("\n-- DELETE /upload/image/{id} --")
+                d = client.delete(f"/upload/image/{body['id']}")
+                check("DELETE /upload/image/{id} -> 200", d.status_code == 200,
+                      f"HTTP {d.status_code} {d.text[:120]}")
+                if d.status_code == 200:
+                    info = d.json()
+                    check("返回 image_id / file_path / unbound_questions / file_deleted",
+                          all(k in info for k in ("image_id", "file_path",
+                                                  "unbound_questions", "file_deleted")),
+                          str(sorted(info.keys())))
+                    check("image_id 与删除目标一致", info["image_id"] == body["id"])
+                    check("file_deleted=True", info["file_deleted"] is True,
+                          str(info["file_deleted"]))
+                    check("物理文件已删除", not up_abs.is_file(), str(up_abs))
+                    check("从题目的 images 里解绑（不再出现死链）",
+                          client.get(f"/questions/{q.id}").json()["images"] == [],
+                          str(client.get(f"/questions/{q.id}").json()["images"]))
+                    # 从 created 里移除，避免第 9 段重复删除报错
+                    created.remove(up_abs)
+
+                d2 = client.delete(f"/upload/image/{body['id']}")
+                check("重复删除 -> 404", d2.status_code == 404, f"HTTP {d2.status_code}")
+                d3 = client.delete("/upload/image/999999")
+                check("删除不存在的 id -> 404", d3.status_code == 404, f"HTTP {d3.status_code}")
+                d4 = client.delete("/upload/image/abc")
+                check("id 非整数 -> 422", d4.status_code == 422, f"HTTP {d4.status_code}")
+
+                # 未挂题的孤儿图片也能删（上传后没录题就删掉）
+                orphan = client.post("/upload/image",
+                                     files={"file": ("orphan.jpg",
+                                                     make_image(800, 600, "JPEG"),
+                                                     "image/jpeg")}).json()
+                orphan_abs = svc.absolute_path_of(orphan["file_path"])
+                created.append(orphan_abs)
+                od = client.delete(f"/upload/image/{orphan['id']}")
+                check("未挂题的孤儿图片可删除",
+                      od.status_code == 200 and not orphan_abs.is_file(),
+                      f"HTTP {od.status_code} file_deleted={od.json().get('file_deleted')}")
+                created.remove(orphan_abs)
 
             # 非法扩展名
             bad = client.post("/upload/image",

@@ -231,10 +231,13 @@ class TagWithCount(TagOut):
 class ImageUploadOut(BaseModel):
     """POST /upload/image 结果（requirements.md 4.4）。
 
+    id 是 question_images 主键 —— 前端录题拿到它之后，
+    才能用 DELETE /upload/image/{id} 删除（见 2.6 图片存储）。
     url 是前端直接可用的访问地址（/uploads/...，不含域名）；
     file_path 是库内相对路径（uploads/...），写进 question_images.file_path。
     """
 
+    id: int
     url: str
     file_path: str
     width: int | None = None
@@ -244,10 +247,15 @@ class ImageUploadOut(BaseModel):
     fell_back_to_original: bool = False
 
 
-class ImageDeleteRequest(BaseModel):
-    """DELETE /upload/image —— 按路径/URL 删除，因为前端只持有 URL。"""
+class ImageDeleteResult(BaseModel):
+    """DELETE /upload/image/{id} 结果。"""
 
-    file_path: str = Field(min_length=1)
+    image_id: int
+    file_path: str
+    # 该图片被多少个其它题目/关联引用并已解绑
+    unbound_questions: int = 0
+    # 物理文件是否真的删掉了（文件可能已被手工清理）
+    file_deleted: bool = False
 
 
 # --------------------------------------------------------------------------

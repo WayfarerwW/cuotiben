@@ -182,6 +182,13 @@ def main() -> int:
         check("软删除字段 deleted_at 存在", not sd_problems,
               f"缺: {sd_problems}" if sd_problems else f"{SOFT_DELETE_TABLES}")
 
+        # 5b. question_images.question_id 必须可空
+        #     上传接口先落记录（此时还没录题）才能返回主键供 DELETE /upload/image/{id} 使用
+        qi_cols = {c["name"]: c for c in insp.get_columns("question_images")}
+        check("question_images.question_id 可空（支持先上传后录题）",
+              qi_cols["question_id"]["nullable"] is True,
+              f"nullable={qi_cols['question_id']['nullable']}")
+
         # 6. tags.name 唯一
         uniques = [u["column_names"] for u in insp.get_unique_constraints("tags")]
         idxs = [tuple(i["column_names"]) for i in insp.get_indexes("tags") if i["unique"]]

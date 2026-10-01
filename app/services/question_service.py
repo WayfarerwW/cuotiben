@@ -211,26 +211,84 @@ def _image_metadata(path: str) -> tuple[int | None, int | None, int | None]:
     return image_service.read_image_metadata(path)
 
 
+def register_image(
+    db: Session,
+    *,
+    file_path: str,
+    width: int | None = None,
+    height: int | None = None,
+    size: int | None = None,
+    sort_order: int = 0,
+) -> QuestionImage:
+    """为刚上传的图片落一条 question_images 记录，返回该记录。
+
+    DELETE /upload/image/{id} 需要 question_images 主键，所以上传时就先建行
+    （此时还没有 question_id）。前端录题时把 url 放进 questions.images，
+    _sync_images 会按路径找到这一行并复用，不会产生重复记录。
+
+    这里不 commit，由调用方控制事务（上传接口自己 commit）。
+    """
+    image = QuestionImage(
+        question_id=None,  # 尚未挂到题目上
+        file_path=file_path,
+        width=width,
+        height=height,
+        size=size,
+        sort_order=sort_order,
+    )
+    db.add(image)
+    db.commit()
+    db.refresh(image)
+    return image
+
+
+def _normalize_image_key(raw: str) -> str:
+    """把 URL 或路径统一成库内相对路径，作为图片的比对键。
+
+    前端可能传 `/uploads/2026/10/01/x.jpg`（上传接口返回的 url），
+    也可能传 `uploads/2026/10/01/x.jpg`（file_path），两者是同一张图。
+    """
+    return image_service.absolute_path_of(raw).relative_to(
+        image_service.PROJECT_ROOT
+    ).as_posix()
+
+
 def _sync_images(db: Session, question: Question, urls: list[str]) -> None:
-    """按传入的 URL 数组重建该题图片列表（保序去重）。"""
-    existing = {img.file_path: img for img in question.images}
+    """按传入的 URL 数组重建该题图片列表（保序去重）。
+
+    优先复用已存在的 question_images 行：
+      - 本题已挂的（编辑场景）
+      - 上传接口刚建好、还没挂题的孤儿行（register_image 产生）
+    """
+    existing = {_normalize_image_key(img.file_path): img for img in question.images}
     used: set[str] = set()
     result: list[QuestionImage] = []
 
     for index, raw in enumerate(urls):
         if raw is None:
             continue
-        path = str(raw).strip()
-        if not path or path in used:
+        text = str(raw).strip()
+        if not text:
             continue
-        used.add(path)
+        key = _normalize_image_key(text)
+        if not key or key in used:
+            continue
+        used.add(key)
 
-        image = existing.get(path)
+        image = existing.get(key)
         if image is None:
-            width, height, size = _image_metadata(path)
+            # 找上传时先建好的孤儿行，复用它而不是再插一条
+            image = db.scalars(
+                select(QuestionImage).where(
+                    QuestionImage.question_id.is_(None),
+                    QuestionImage.file_path == key,
+                )
+            ).first()
+        if image is None:
+            width, height, size = _image_metadata(key)
             image = QuestionImage(
                 question_id=question.id,
-                file_path=path,
+                file_path=key,
                 width=width,
                 height=height,
                 size=size,
@@ -238,13 +296,16 @@ def _sync_images(db: Session, question: Question, urls: list[str]) -> None:
             )
             db.add(image)
         else:
+            image.question_id = question.id
             image.sort_order = index
         result.append(image)
 
-    # 不在新列表里的旧图片做物理删除（DB 行删除，文件由后台任务处理）
-    for path, image in existing.items():
-        if path not in used:
-            db.delete(image)
+    # 不在新列表里的旧图片只解除本题关联，不删记录也不删文件：
+    # 那条记录可能被上传接口返回的 id 引用着，也可能还有别的题在用。
+    # 真正删除走 DELETE /upload/image/{id}。
+    for key, image in existing.items():
+        if key not in used:
+            image.question_id = None
 
     question.images = result  # type: ignore[assignment]
 
@@ -348,34 +409,59 @@ def delete_question(db: Session, question_id: int) -> None:
     db.commit()
 
 
-def detach_image(db: Session, stored_path: str) -> int:
-    """把某个图片路径从所有题目的 images 列表里解绑，返回受影响题目数。
+class QuestionImageNotFoundError(QuestionError):
+    """图片不存在（或已删除）。"""
 
-    DELETE /upload/image 用：前端只持有 URL，删图片时要先把引用摘干净，
-    否则题目的 images 里会留下指向已删文件的死链。
-    路径比较用归一化后的形式，避免 `/uploads/a.jpg` 与 `uploads/a.jpg`
-    被当成两张不同的图片。
+
+def delete_image(db: Session, image_id: int) -> dict:
+    """按 question_images 主键删除图片（requirements.md 4.4 DELETE /upload/image/{id}）。
+
+    步骤：
+      1. 取出该图片记录（拿到 file_path）
+      2. 把它从各个题目的 images 关联里摘掉，避免留下指向已删文件的死链
+      3. 删除物理文件（不进后台队列：本地单机 unlink 一个小文件是毫秒级，
+         引入队列的复杂度大于收益；量级变大再换 BackgroundTasks）
+      4. 删除数据库记录
+
+    返回 {image_id, file_path, unbound_questions, file_deleted} 供 router 组装响应。
     """
-    target = image_service.url_for(stored_path)
-    affected = 0
-    questions = db.scalars(
-        select(Question).where(Question.deleted_at.is_(None))
-        .options(selectinload(Question.images))
+    image = db.get(QuestionImage, image_id)
+    if image is None:
+        raise QuestionImageNotFoundError(f"图片 {image_id} 不存在")
+
+    stored_path = image.file_path
+    target_url = image_service.url_for(stored_path)
+
+    # 2. 解绑：把引用了同一路径的关联行一并清掉
+    unbound = 0
+    others = db.scalars(
+        select(QuestionImage).where(QuestionImage.id != image_id)
+        .options(selectinload(QuestionImage.question))
     ).all()
-    for question in questions:
-        keep = [
-            img for img in question.images
-            if image_service.url_for(img.file_path) != target
-        ]
-        if len(keep) != len(question.images):
-            for img in question.images:
-                if image_service.url_for(img.file_path) == target:
-                    db.delete(img)
-            question.images = keep  # type: ignore[assignment]
-            affected += 1
-    if affected:
-        db.commit()
-    return affected
+    for other in others:
+        if image_service.url_for(other.file_path) != target_url:
+            continue
+        question = other.question
+        if question is not None:
+            question.images = [
+                img for img in question.images if img.id != other.id
+            ]  # type: ignore[assignment]
+            unbound += 1
+        db.delete(other)
+
+    # 3. 物理文件
+    file_deleted = image_service.delete_file(stored_path)
+
+    # 4. 记录本身
+    db.delete(image)
+    db.commit()
+
+    return {
+        "image_id": image_id,
+        "file_path": stored_path,
+        "unbound_questions": unbound,
+        "file_deleted": file_deleted,
+    }
 
 
 def set_starred(db: Session, question_id: int, starred: bool) -> Question:

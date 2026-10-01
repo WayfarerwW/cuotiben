@@ -21,7 +21,9 @@ if TYPE_CHECKING:
 class QuestionImage(PKMixin, CreatedAtMixin, Base):
     __tablename__ = "question_images"
 
-    question_id: Mapped[int] = fk_cascade("questions.id")
+    # 可空：上传接口先落记录（此时还没录题），拿到 id 后前端才用该图片建题。
+    # 需求 4.4 的 DELETE /upload/image/{id} 需要这个主键，所以不能等建题时才建行。
+    question_id: Mapped[int | None] = fk_cascade("questions.id", nullable=True)
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
     original_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -29,4 +31,5 @@ class QuestionImage(PKMixin, CreatedAtMixin, Base):
     size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
-    question: Mapped["Question"] = relationship(back_populates="images")
+    # 可空：未挂题的孤儿图片（上传后还没录题）
+    question: Mapped["Question | None"] = relationship(back_populates="images")

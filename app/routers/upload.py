@@ -13,12 +13,13 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..schemas import ImageDeleteRequest, ImageUploadOut, MessageOut
+from ..schemas import ImageDeleteResult, ImageUploadOut
 from ..services import image_service, question_service
 from ..services.image_service import (
     ImageTooLargeError,
     UnsupportedImageError,
 )
+from ..services.question_service import QuestionImageNotFoundError
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/upload", tags=["upload"])
@@ -26,10 +27,16 @@ router = APIRouter(prefix="/upload", tags=["upload"])
 
 @router.post("/image", response_model=ImageUploadOut,
              status_code=status.HTTP_201_CREATED, summary="上传并压缩图片")
-async def upload_image(file: UploadFile = File(...)) -> ImageUploadOut:
+async def upload_image(
+    file: UploadFile = File(...), db: Session = Depends(get_db)
+) -> ImageUploadOut:
     """接收图片 -> 压缩到宽 1080px JPEG q75 -> 存 uploads/年/月/日/uuid.jpg。
 
     压缩失败时回退原图，**不阻断上传**（需求 2.7）。
+
+    同时落一条 question_images 记录并返回其主键 id，这样：
+      - 前端录题时把 url 放进 questions.images（会自动复用同一条记录）
+      - 删除时可用 DELETE /upload/image/{id}
     """
     try:
         image_service.validate_extension(file.filename)
@@ -48,7 +55,13 @@ async def upload_image(file: UploadFile = File(...)) -> ImageUploadOut:
     result = image_service.compress_uniform(data)
     file_path, _absolute = image_service.save_upload(result.data, result.ext)
 
+    record = question_service.register_image(
+        db, file_path=file_path, width=result.width, height=result.height,
+        size=result.size,
+    )
+
     return ImageUploadOut(
+        id=record.id,
         url=image_service.url_for(file_path),
         file_path=file_path,
         width=result.width,
@@ -58,27 +71,17 @@ async def upload_image(file: UploadFile = File(...)) -> ImageUploadOut:
     )
 
 
-@router.delete("/image", response_model=MessageOut, summary="删除图片")
-def delete_image(
-    payload: ImageDeleteRequest, db: Session = Depends(get_db)
-) -> MessageOut:
-    """按图片 URL/路径删除：先解绑题目关联，再删物理文件。
+@router.delete("/image/{image_id}", response_model=ImageDeleteResult,
+               summary="删除图片")
+def delete_image(image_id: int, db: Session = Depends(get_db)) -> ImageDeleteResult:
+    """按 question_images 主键删除图片（requirements.md 4.4）。
 
-    需求 2.3 要求物理文件删除放后台异步任务。这里在响应前同步 unlink 一个
-    小文件（毫秒级），不做成队列——本项目是纯本地单机，引入后台队列的复杂度
-    大于收益；若将来图片量级变大再换成 BackgroundTasks。
+    会同时解绑引用它的题目关联并删除物理文件；
+    需求 2.3 说物理删除放后台异步任务，这里在响应前同步 unlink 一个小文件
+    （毫秒级）—— 纯本地单机引入后台队列的复杂度大于收益，量级变大再换。
     """
-    stored = payload.file_path
-    if not stored:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "缺少 file_path")
-
-    # 先解绑：从所有引用它的题目的 images 列表里移除
-    unbound = question_service.detach_image(db, stored)
-
-    deleted = image_service.delete_file(stored)
-    if not deleted and not unbound:
-        raise HTTPException(status.HTTP_404_NOT_FOUND,
-                            f"未找到图片 {stored}，也没有题目引用它")
-
-    msg = f"已删除图片（解绑 {unbound} 处引用）" if deleted else f"已解绑 {unbound} 处引用"
-    return MessageOut(message=msg)
+    try:
+        info = question_service.delete_image(db, image_id)
+    except QuestionImageNotFoundError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e)) from e
+    return ImageDeleteResult(**info)
