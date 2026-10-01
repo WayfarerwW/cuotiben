@@ -20,7 +20,7 @@
 | 后端 | Python FastAPI |
 | 数据库 | SQLite（data/cuotiben.db） |
 | ORM | SQLAlchemy |
-| 前端 | Vue 3 + Element Plus（响应式） |
+| 前端 | Vue 3 + 原生 HTML/CSS（响应式） |
 | 图片处理 | Pillow + pillow-heif |
 | PDF 导出 | WeasyPrint + Jinja2 |
 | 启动 | uvicorn，浏览器访问 localhost:8000 |
