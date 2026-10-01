@@ -69,11 +69,24 @@
 - **状态类接口统一支持两种模式**：不传 body 为翻转，传 body 为直接设置。
   适用于 mastery 等二元状态切换接口，让前端"切换按钮"与"明确设置"
   两种交互复用同一接口，避免为同一资源开两个路由。
-- **所有 PUT 接口统一用 `model_fields_set` 区分未传和传 null**：
-  未传的字段保持原值，传 `null`（或空串）表示清空该字段。
-  否则"清空字段"这一意图无法表达 —— 不传与传 null 会被一视同仁。
+- **所有 PUT 接口统一用 `model_fields_set` 区分未传和传 null**。
   路由里把 `set(payload.model_fields_set)` 传给 service，
-  service 按该集合决定改哪些字段（参考 `services/note_service.update_note`）。
+  service 按该集合决定改哪些字段。语义分三档：
+
+  | 字段性质 | 未传 | 传 `null` |
+  |---|---|---|
+  | **允许为空**（如 `questions.stem` / `questions.answer`） | 保持原值 | **清空** |
+  | **不允许为空**（如 `folders.name`、`questions.is_starred`） | 保持原值 | **422**（用 `field_validator` 拒绝） |
+  | **配置项**（`settings.*`） | 保持原值 | **删除该配置项，回退默认值** |
+
+  要点：
+  - 不允许为空的字段必须**显式拒绝** null，而不是静默忽略 ——
+    静默忽略会让前端误以为修改成功。
+  - 校验"最终值"而不是"本次传入的值"：若把 `intervals` 置 null 回退默认，
+    要校验回退后的默认序列，否则等于绕过校验。
+  - 判断依据是"字段是否可空"，不是"传 null 安全不安全"。
+  - 参考实现：`services/question_service.update_question`、
+    `services/note_service.update_note`、`services/settings_service.update_settings`。
 - **具体路径必须注册在参数化路径之前**：例如 `/notes/search` 要写在
   `/notes/{note_id}` 之前，否则会被参数化路径捕获（`search` 会被当成 id）。
   所有模块统一遵守；新增接口时先检查本模块内是否存在会冲突的参数化路径。

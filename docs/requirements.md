@@ -71,6 +71,9 @@
 - `force=true` 表示确认要删：**只软删除文件夹本身（学科会连带其下大类），
   题目保持原状不动**（既不删除也不改所属）。
 
+改名时 `name` 为必填，不允许传 null：传 null 或空串返回 422，
+不会静默忽略（否则前端会以为改名成功了）。
+
 ### 2.3 题目管理
 
 字段：folder_id、stem（可空）、answer（可空）、is_starred、mastery_status、图片、标签
@@ -381,6 +384,8 @@ tags.name 入库前归一化
 4. 接口清单
 4.1 文件夹
 
+`name` 为必填，不允许传 null（传 null 或空串返回 422）。
+
 方法	路径	说明
 POST	/folders	创建
 GET	/folders/tree	完整树
@@ -590,9 +595,30 @@ PUT 接口用 Pydantic 的 `model_fields_set` 区分"未传字段"和"传了 nul
 方法	路径	说明
 POST	/export/pdf	PDF 导出
 4.8 设置
+
 方法	路径	说明
 GET	/settings	获取
+
+`GET /settings` 响应字段：
+`intervals`、`backfill_limit`、`backfill_reset_days`
+
+库中缺失的 key 回退默认值（`[3,7,15,30]` / `20` / `14`），不会返回 null。
+
+方法	路径	说明
 PUT	/settings	更新
+
+`PUT /settings` 批量更新，只改请求体里出现的项。
+用 `model_fields_set` 区分"未传"与"传 null"：
+
+- **未传**：保持原值
+- **传 null**：**删除该配置项，回退到默认值**
+  （`intervals` -> `[3,7,15,30]`、`backfill_limit` -> `20`、
+  `backfill_reset_days` -> `14`）
+- **传具体值**：写入该值
+
+校验针对**合并后的最终值**：把 `intervals` 置 null 回退默认时，
+校验的是回退后的默认序列，而不是跳过校验。
+`intervals` 必须为 4 个正整数且严格递增（见 2.10），非法值 422。
 
 4.9 健康检查
 方法	路径	说明
