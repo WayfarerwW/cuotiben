@@ -433,13 +433,15 @@
     /**
      * 导出 PDF，返回 { blob, filename }，由调用方触发下载。
      *
-     * 注意：`POST /export/pdf` **后端尚未实现**（docs/requirements.md 4.7 有定义，
-     * 但 app/routers/ 下还没有 export 模块）。现在调用会得到 404 / 405，
-     * 由本文件的统一错误处理抛出 ApiError。后端补上后本方法无需改动。
+     * `filename` 从响应的 Content-Disposition 里解析（后端按 RFC 5987 给出
+     * `filename*=UTF-8''…`，带日期与范围标识）。后端实现见
+     * app/routers/export.py，中文渲染用 fonts/NotoSansSC-VF.ttf。
      *
      * @param {object} [data] 导出范围与选项，形如
      *   { scope: 'folder'|'tags'|'starred'|'review_queue'|'manual',
      *     folder_id, tags, question_ids, with_answer, include_tags }
+     *   scope=manual 时必须给 question_ids；scope=tags 时必须给 tags，
+     *   否则后端返回 422。
      */
     exportPDF: function (data, opts) {
       return request('/export/pdf', Object.assign(

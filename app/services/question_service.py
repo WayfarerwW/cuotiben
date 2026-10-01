@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, false, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from ..models import (
@@ -55,6 +55,8 @@ class QuestionFilters:
     keyword: str | None = None
     starred: bool | None = None
     mastery: str | None = None
+    #: 只取这些 id（导出"手动勾选"范围用）。空列表表示不按 id 过滤。
+    ids: list[int] | None = None
 
     def normalized_tags(self) -> list[str]:
         """标签查询词也要归一化，否则全角输入搜不到已存的小写标签。"""
@@ -71,6 +73,12 @@ def _base_query() -> Select:
 
 
 def _apply_filters(stmt: Select, filters: QuestionFilters) -> Select:
+    if filters.ids is not None:
+        if not filters.ids:
+            # 空列表 = 明确"一个都不要"，而不是"不过滤"
+            return stmt.where(false())
+        stmt = stmt.where(Question.id.in_(filters.ids))
+
     if filters.folder_id is not None:
         stmt = stmt.where(Question.folder_id == filters.folder_id)
 

@@ -1994,6 +1994,36 @@ pre,
      --dur-sidebar(300ms) 侧边栏宽度
    ========================================================================== */
 
+/* --- 手动勾选列（导出 PDF 的"手动勾选"范围用）--- */
+.cell-check {
+  width: 36px;
+  text-align: center;
+  padding-left: var(--sp-tight);
+  padding-right: 0;
+}
+
+.cell-check input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--c-primary-fill);
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+/* 选中行的轻微底色，便于确认勾了哪些 */
+.data-table tbody tr:has(.cell-check input:checked) {
+  background: var(--c-primary-soft);
+}
+
+/* 移动端表格转卡片后，勾选框挪到卡片顶部 */
+@media (max-width: 767px) {
+  .cell-check {
+    width: auto;
+    text-align: left;
+    padding: 0 0 var(--sp-tight);
+  }
+}
+
 /* --- 6.1 页面切换：淡入淡出 200ms --- */
 /*
    用 CSS 动画而不是 Vue 的 <transition>：

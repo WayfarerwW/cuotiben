@@ -594,6 +594,26 @@ PUT 接口用 Pydantic 的 `model_fields_set` 区分"未传字段"和"传了 nul
 4.7 导出
 方法	路径	说明
 POST	/export/pdf	PDF 导出
+
+`POST /export/pdf` 请求字段：
+`scope`、`folder_id`、`tags`、`question_ids`、`with_answer`、`include_tags`
+
+- `scope` 五个取值见 2.16。各范围需要的额外字段：
+  `folder` 用 `folder_id`（不传表示全部题目）、`tags` 用 `tags`、
+  `manual` 用 `question_ids`；`starred` 与 `review_queue` 不需要额外字段。
+- `with_answer` 默认 `false`，`include_tags` 默认 `false`。
+- 必填项缺失返回 **422**：`scope=manual` 未给 `question_ids`、
+  `scope=tags` 未给 `tags`。**范围为空同样返回 422**，
+  不产出空白 PDF（否则用户会以为导出成功但内容丢了）。
+
+响应：`application/pdf` 二进制流（不落盘）。
+
+`Content-Disposition` 同时给出 ASCII 回退名与 RFC 5987 的
+`filename*=UTF-8''…`，后者含日期与范围标识，例如
+`20260214_错题本_按文件夹.pdf`。
+
+响应头另含 `X-Question-Count`（本次导出的题目数）。
+
 4.8 设置
 
 方法	路径	说明

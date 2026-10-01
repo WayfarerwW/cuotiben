@@ -17,7 +17,7 @@ from enum import Enum
 from itertools import pairwise
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .models.settings import (
     DEFAULT_BACKFILL_LIMIT,
@@ -483,12 +483,40 @@ class ExportScope(str, Enum):
 
 
 class ExportPdfRequest(BaseModel):
+    """POST /export/pdf 请求体（requirements.md 2.16）。
+
+    各 scope 需要的额外字段：
+      - folder       用 folder_id（不传 = 全部题目）
+      - tags         用 tags（多标签，按 5.5 的 AND 语义）
+      - starred / review_queue  无需额外字段
+      - manual       用 question_ids
+    """
+
     scope: ExportScope
     folder_id: int | None = None
     tags: list[str] = Field(default_factory=list)
     question_ids: list[int] = Field(default_factory=list)
     with_answer: bool = False
     include_tags: bool = False
+
+    @field_validator("tags")
+    @classmethod
+    def _clean_tags(cls, v: list[str]) -> list[str]:
+        # 标签归一化（trim/小写/全半角）由 tag_service 负责（6.6），
+        # 这里只挡掉全空白的输入。
+        return [t for t in v if t and t.strip()]
+
+    @model_validator(mode="after")
+    def _check_scope_requirements(self) -> "ExportPdfRequest":
+        """scope 必需字段缺失时直接 422，不要静默导出一份空白 PDF。
+
+        静默返回空产物会让用户以为"导出成功但没内容"，比报错更难排查。
+        """
+        if self.scope is ExportScope.manual and not self.question_ids:
+            raise ValueError("scope=manual 时必须提供 question_ids")
+        if self.scope is ExportScope.tags and not self.tags:
+            raise ValueError("scope=tags 时必须提供 tags")
+        return self
 
 
 class ExportRecordOut(OrmBase):

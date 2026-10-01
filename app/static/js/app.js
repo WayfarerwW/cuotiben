@@ -185,6 +185,10 @@
 
       /* ---------------- 导出 ---------------- */
       var exportDialog = reactive({ open: false, busy: false });
+      /** 导出弹窗里的错误文案（如"该范围内没有题目"），比 toast 更易看到。 */
+      var exportError = ref('');
+      /** 手动勾选的题目 id（供导出 scope=manual 使用）。 */
+      var selectedQuestionIds = ref([]);
       var exportForm = reactive({
         scope: 'folder', folder_id: null, tags: [], with_answer: true, include_tags: false,
       });
@@ -1156,14 +1160,52 @@
 
       function openExport() {
         exportForm.folder_id = currentFolderId.value || null;
+        exportError.value = '';
+        // 有勾选时默认走"手动勾选"，否则按当前文件夹
+        if (selectedQuestionIds.value.length) {
+          exportForm.scope = 'manual';
+        }
         rememberFocus();
         exportDialog.open = true;
         focusIntoModal();
         if (!tags.value.length) { loadTags(); }
       }
 
+      /** 勾选/取消单题。 */
+      function toggleSelectQuestion(id, checked) {
+        var list = selectedQuestionIds.value.slice();
+        var at = list.indexOf(id);
+        if (checked && at === -1) { list.push(id); }
+        if (!checked && at !== -1) { list.splice(at, 1); }
+        selectedQuestionIds.value = list;
+      }
+
+      /** 当前列表是否已全选（用于表头复选框的 checked 态）。 */
+      var allFilteredSelected = computed(function () {
+        var rows = filteredQuestions.value;
+        if (!rows.length) { return false; }
+        return rows.every(function (q) {
+          return selectedQuestionIds.value.indexOf(q.id) !== -1;
+        });
+      });
+
+      /** 表头全选/取消全选。 */
+      function toggleSelectAll(checked) {
+        var ids = filteredQuestions.value.map(function (q) { return q.id; });
+        if (!checked) {
+          selectedQuestionIds.value = selectedQuestionIds.value.filter(function (id) {
+            return ids.indexOf(id) === -1;
+          });
+          return;
+        }
+        var merged = selectedQuestionIds.value.slice();
+        ids.forEach(function (id) { if (merged.indexOf(id) === -1) { merged.push(id); } });
+        selectedQuestionIds.value = merged;
+      }
+
       function doExport() {
         exportDialog.busy = true;
+        exportError.value = '';
         var payload = {
           scope: exportForm.scope,
           with_answer: exportForm.with_answer,
@@ -1176,7 +1218,8 @@
           payload.tags = exportForm.tags;
         }
         if (exportForm.scope === 'manual') {
-          payload.question_ids = questions.value.map(function (q) { return q.id; });
+          // 只导出**用户勾选**的题；此前这里错误地发送了当前列表的全部题目
+          payload.question_ids = selectedQuestionIds.value.slice();
         }
         API.exportPDF(payload)
           .then(function (res) {
@@ -1191,7 +1234,11 @@
             exportDialog.open = false;
             toast('已开始下载 PDF');
           })
-          .catch(toastError)
+          .catch(function (err) {
+            // 422（该范围内没有题目 / 缺必填参数）在弹窗里显示，别只弹 toast
+            exportError.value = err && err.message ? err.message : '导出失败';
+            toastError(err);
+          })
           .then(function () { exportDialog.busy = false; });
       }
 
@@ -1305,6 +1352,11 @@
         settingsSaving: settingsSaving,
         // 导出
         exportDialog: exportDialog,
+        exportError: exportError,
+        selectedQuestionIds: selectedQuestionIds,
+        allFilteredSelected: allFilteredSelected,
+        toggleSelectQuestion: toggleSelectQuestion,
+        toggleSelectAll: toggleSelectAll,
         exportForm: exportForm,
         // 方法
         go: go,

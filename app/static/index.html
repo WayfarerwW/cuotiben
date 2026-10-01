@@ -463,6 +463,14 @@
               共 <strong class="num">{{ filteredQuestions.length }}</strong> 题
               <template v-if="currentFolderName">· {{ currentFolderName }}</template>
             </span>
+            <!-- 手动勾选：供"导出 PDF → 手动勾选"使用 -->
+            <template v-if="selectedQuestionIds.length">
+              <span class="text-aux">
+                已选 <strong class="num">{{ selectedQuestionIds.length }}</strong> 题
+              </span>
+              <button class="btn btn--text btn--sm" type="button"
+                      @click="selectedQuestionIds = []">清空选择</button>
+            </template>
             <button v-if="currentFolderId" class="btn btn--text btn--sm" type="button"
                     @click="currentFolderId = null">
               清除文件夹筛选
@@ -487,6 +495,12 @@
             <table v-else class="data-table data-table--cards">
               <thead>
                 <tr>
+                  <th class="cell-check">
+                    <input type="checkbox" class="checkbox__input"
+                           aria-label="全选/取消全选当前列表"
+                           :checked="allFilteredSelected"
+                           @change="toggleSelectAll($event.target.checked)">
+                  </th>
                   <th>题干预览</th>
                   <th>所属文件夹</th>
                   <th>标签</th>
@@ -499,6 +513,12 @@
               <tbody>
                 <tr v-for="q in filteredQuestions" :key="q.id"
                     :class="{ 'is-flash': flashedQuestionId === q.id }">
+                  <td class="cell-check" data-label="选择">
+                    <input type="checkbox" class="checkbox__input"
+                           :aria-label="'选择题目：' + (q.stem || '（无题干）')"
+                           :checked="selectedQuestionIds.includes(q.id)"
+                           @change="toggleSelectQuestion(q.id, $event.target.checked)">
+                  </td>
                   <td class="cell-stem" :data-label="'题干'">
                     {{ q.stem || '（无题干，仅图片）' }}
                   </td>
@@ -998,9 +1018,9 @@
             </label>
           </div>
 
-          <p class="text-aux placeholder">
-            后端 <code>POST /export/pdf</code> 尚未实现。点击导出会返回错误提示，
-            等后端补齐后此弹窗无需改动。
+          <p v-if="exportError" class="text-danger" role="alert">{{ exportError }}</p>
+          <p v-else class="text-aux">
+            导出为 PDF：题目按顺序排版、不跨页切断，含答案时答案另起一页。
           </p>
         </div>
 

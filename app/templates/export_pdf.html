@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>错题本导出</title>
+<style>
+  /*
+    中文字体：字体文件随仓库放在 fonts/（Noto Sans SC，SIL OFL 1.1）。
+    必须用 @font-face 显式指定文件 —— WeasyPrint 走 Pango 找字，
+    不显式给的话会落到系统字体，在没装中文字体的机器上就变方框。
+    font_uri 由 export_service 用 Path.as_uri() 生成（file:/// 绝对路径）。
+  */
+  @font-face {
+    font-family: "Noto Sans SC";
+    src: url("{{ font_uri }}");
+  }
+
+  @page {
+    size: A4;
+    margin: 16mm 14mm 18mm 14mm;
+
+    /* 页眉页脚（requirements.md 2.16「页眉页脚」）*/
+    @top-center {
+      content: "错题本 · {{ scope_label }}";
+      font-family: "Noto Sans SC";
+      font-size: 9pt;
+      color: #718096;
+    }
+    @bottom-center {
+      content: "第 " counter(page) " / " counter(pages) " 页";
+      font-family: "Noto Sans SC";
+      font-size: 9pt;
+      color: #718096;
+    }
+  }
+
+  :root { color: #2D3748; }
+
+  body {
+    font-family: "Noto Sans SC";
+    font-size: 11pt;
+    line-height: 1.65;
+    margin: 0;
+  }
+
+  /* ---------------- 封面信息条 ---------------- */
+  .doc-head {
+    border-bottom: 2px solid #4A7CDB;
+    padding-bottom: 4mm;
+    margin-bottom: 6mm;
+  }
+  .doc-title { font-size: 18pt; font-weight: 700; margin: 0 0 2mm; }
+  .doc-meta { font-size: 9pt; color: #718096; }
+  .doc-meta span + span { margin-left: 4mm; }
+
+  /* ---------------- 题目区 ---------------- */
+  .q {
+    /*
+      requirements.md 2.16「题目不跨页切断」。
+      两个属性都写：page-break-inside 是老名字，break-inside 是新名字，
+      WeasyPrint 70 认后者更稳，但保留前者兼容。
+    */
+    page-break-inside: avoid;
+    break-inside: avoid;
+
+    border: 1px solid #E2E8F6;
+    border-radius: 3mm;
+    padding: 4mm;
+    margin-bottom: 5mm;
+  }
+
+  .q__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 3mm;
+  }
+  .q__no { font-weight: 700; font-size: 12pt; }
+  .q__flags { font-size: 8.5pt; color: #718096; }
+  .q__flags .star { color: #B7791F; }
+
+  .q__stem { white-space: pre-wrap; }
+
+  .q__tags { margin-top: 2.5mm; font-size: 8.5pt; }
+  .q__tag {
+    display: inline-block;
+    background: #EDF2F7;
+    color: #3D6BC4;
+    border-radius: 2mm;
+    padding: 0.4mm 2mm;
+    margin-right: 1.5mm;
+  }
+
+  /* 图片自适应：max-width 100% 不要溢出边框 */
+  .q__images { margin-top: 3mm; }
+  .q__images img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin-bottom: 2mm;
+    border: 1px solid #E2E8F6;
+    border-radius: 2mm;
+  }
+
+  /* ---------------- 答案区 ---------------- */
+  /*
+    requirements.md 2.16「含答案时答案统一放末尾」：
+    答案集中放在题目之后的独立章节，并从新的一页开始。
+  */
+  .answers { page-break-before: always; break-before: page; }
+
+  .answers__title {
+    font-size: 15pt;
+    font-weight: 700;
+    border-bottom: 2px solid #4A7CDB;
+    padding-bottom: 3mm;
+    margin-bottom: 5mm;
+  }
+
+  .a {
+    page-break-inside: avoid;
+    break-inside: avoid;
+    margin-bottom: 5mm;
+    padding-bottom: 4mm;
+    border-bottom: 1px dashed #E2E8F6;
+  }
+  .a__no { font-weight: 700; margin-bottom: 2mm; }
+  .a__body { white-space: pre-wrap; }
+
+  .empty {
+    border: 1px dashed #E2E8F6;
+    border-radius: 3mm;
+    padding: 10mm;
+    text-align: center;
+    color: #5A6673;
+  }
+</style>
+</head>
+<body>
+
+<div class="doc-head">
+  <h1 class="doc-title">错题本 · {{ scope_label }}</h1>
+  <div class="doc-meta">
+    <span>共 {{ total }} 题</span>
+    <span>{% if with_answer %}含答案{% else %}不含答案{% endif %}</span>
+    <span>导出时间 {{ generated_at }}</span>
+  </div>
+</div>
+
+{% if not items %}
+  <div class="empty">该范围内没有题目。</div>
+{% endif %}
+
+<!-- ==================== 题目区 ==================== -->
+{% for item in items %}
+  <section class="q">
+    <div class="q__head">
+      <span class="q__no">第 {{ item.no }} 题</span>
+      <span class="q__flags">
+        {% if item.is_starred %}<span class="star">★ 重点</span>{% endif %}
+        {% if item.folder_name %}　{{ item.folder_name }}{% endif %}
+        　{{ item.mastery_label }}
+      </span>
+    </div>
+
+    <div class="q__stem">{{ item.stem }}</div>
+
+    {% if include_tags and item.tags %}
+      <div class="q__tags">
+        {% for tag in item.tags %}<span class="q__tag">{{ tag }}</span>{% endfor %}
+      </div>
+    {% endif %}
+
+    {% if item.images %}
+      <div class="q__images">
+        {% for uri in item.images %}<img src="{{ uri }}" alt="题目配图">{% endfor %}
+      </div>
+    {% endif %}
+  </section>
+{% endfor %}
+
+<!-- ==================== 答案区（另起一页，统一放末尾）==================== -->
+{% if with_answer and items %}
+  <section class="answers">
+    <h2 class="answers__title">答案与解析</h2>
+    {% for item in items %}
+      <div class="a">
+        <div class="a__no">第 {{ item.no }} 题</div>
+        <div class="a__body">{{ item.answer }}</div>
+      </div>
+    {% endfor %}
+  </section>
+{% endif %}
+
+</body>
+</html>

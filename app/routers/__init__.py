@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from . import folders, notes, questions, review, settings, tags, upload
+from . import export, folders, notes, questions, review, settings, tags, upload
 
 api_router = APIRouter()
+api_router.include_router(export.router)
 api_router.include_router(folders.router)
 api_router.include_router(notes.router)
 api_router.include_router(questions.router)
