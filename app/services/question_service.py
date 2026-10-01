@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session, selectinload
@@ -29,7 +28,7 @@ from ..models import (
     question_tags,
 )
 from ..models.base import utcnow
-from . import folder_service, settings_service, tag_service
+from . import folder_service, image_service, settings_service, tag_service
 
 
 class QuestionError(Exception):
@@ -203,23 +202,13 @@ def attach_review_state(db: Session, questions: list[Question]) -> None:
 
 
 def _image_metadata(path: str) -> tuple[int | None, int | None, int | None]:
-    """尽力从磁盘读取图片宽高与字节数。
+    """读取图片宽高与字节数。
 
-    images 由前端以 URL 数组传入（当前上传接口尚未实现），文件可能还不存在，
-    因此这里全部容错：读不到就留空，不影响建题。
+    images 由前端以 URL 数组传入（如 /uploads/2026/10/01/x.jpg），
+    路径解析统一交给 image_service，避免两处各写一套相对/绝对路径逻辑。
+    读不到就留空，不影响建题。
     """
-    try:
-        candidate = Path(path)
-        if not candidate.is_file():
-            return None, None, None
-        size = candidate.stat().st_size
-        from PIL import Image
-
-        with Image.open(candidate) as img:
-            width, height = img.size
-        return width, height, size
-    except Exception:  # noqa: BLE001  图片元数据只是锦上添花，失败不该阻断建题
-        return None, None, None
+    return image_service.read_image_metadata(path)
 
 
 def _sync_images(db: Session, question: Question, urls: list[str]) -> None:
@@ -365,6 +354,36 @@ def delete_question(db: Session, question_id: int) -> None:
     question = get_question(db, question_id)
     question.deleted_at = utcnow()
     db.commit()
+
+
+def detach_image(db: Session, stored_path: str) -> int:
+    """把某个图片路径从所有题目的 images 列表里解绑，返回受影响题目数。
+
+    DELETE /upload/image 用：前端只持有 URL，删图片时要先把引用摘干净，
+    否则题目的 images 里会留下指向已删文件的死链。
+    路径比较用归一化后的形式，避免 `/uploads/a.jpg` 与 `uploads/a.jpg`
+    被当成两张不同的图片。
+    """
+    target = image_service.url_for(stored_path)
+    affected = 0
+    questions = db.scalars(
+        select(Question).where(Question.deleted_at.is_(None))
+        .options(selectinload(Question.images))
+    ).all()
+    for question in questions:
+        keep = [
+            img for img in question.images
+            if image_service.url_for(img.file_path) != target
+        ]
+        if len(keep) != len(question.images):
+            for img in question.images:
+                if image_service.url_for(img.file_path) == target:
+                    db.delete(img)
+            question.images = keep  # type: ignore[assignment]
+            affected += 1
+    if affected:
+        db.commit()
+    return affected
 
 
 def set_starred(db: Session, question_id: int, starred: bool) -> Question:

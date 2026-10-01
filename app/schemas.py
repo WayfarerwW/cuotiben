@@ -229,15 +229,25 @@ class TagWithCount(TagOut):
 
 
 class ImageUploadOut(BaseModel):
-    """POST /upload/image 结果。"""
+    """POST /upload/image 结果（requirements.md 4.4）。
 
-    id: int
+    url 是前端直接可用的访问地址（/uploads/...，不含域名）；
+    file_path 是库内相对路径（uploads/...），写进 question_images.file_path。
+    """
+
+    url: str
     file_path: str
     width: int | None = None
     height: int | None = None
     size: int | None = None
     # 压缩失败回退原图时为 True（requirements.md 2.7 不阻断上传）
     fell_back_to_original: bool = False
+
+
+class ImageDeleteRequest(BaseModel):
+    """DELETE /upload/image —— 按路径/URL 删除，因为前端只持有 URL。"""
+
+    file_path: str = Field(min_length=1)
 
 
 # --------------------------------------------------------------------------

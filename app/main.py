@@ -97,5 +97,24 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(api_router)
 
 
-# 模块加载时即完成路由挂载（放在函数定义之后）
+def mount_static(app: FastAPI) -> None:
+    """挂载 uploads/ 为静态目录，使图片能通过 /uploads/... 直接访问。
+
+    路径前缀必须与 image_service.UPLOADS_URL_PREFIX 一致，
+    否则 url_for() 生成的地址前端打不开。
+    """
+    from fastapi.staticfiles import StaticFiles
+
+    from .services.image_service import UPLOADS_DIR, UPLOADS_URL_PREFIX
+
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    app.mount(
+        UPLOADS_URL_PREFIX,
+        StaticFiles(directory=str(UPLOADS_DIR)),
+        name="uploads",
+    )
+
+
+# 模块加载时完成挂载（放在函数定义之后）
 register_routers(app)
+mount_static(app)
