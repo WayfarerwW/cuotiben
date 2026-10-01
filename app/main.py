@@ -20,10 +20,12 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
 from sqlalchemy.engine import make_url
 
 from .database import SessionLocal, database_url, engine, init_db
 from .services.settings_service import ensure_default_settings
+from .services.sync_service import start_background_sync, stop_background_sync
 
 # 前端静态资源目录（index.html / css / js）
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -33,6 +35,12 @@ STATIC_DIR = PROJECT_ROOT / "app" / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """应用启动/关闭钩子。"""
+    # 0. 读 .env（AGENTS.md 五的同步配置在这里）。
+    #    放在最前面：数据库连接串等也可能来自 .env。
+    #    load_dotenv 默认 override=False，即**真实环境变量优先**，
+    #    方便临时覆盖而不改文件。
+    load_dotenv(PROJECT_ROOT / ".env")
+
     # 1. 建表（init_db 内部会 import app.models 注册全部模型）
     init_db()
 
@@ -46,7 +54,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     print(f"[startup] 数据库: {resolve_db_path()}")
     print(f"[startup] 连接串: {database_url()}")
+
+    # 3. GitHub 自动同步（AGENTS.md 五）。
+    #    默认关闭；只有 GIT_SYNC_ENABLED=1 且配了 repo_url 时才起线程。
+    #    必须放在 lifespan 里而不是模块加载时：run.py 用了 uvicorn 的
+    #    reload=True，模块会被加载两次（reloader 父进程 + 工作子进程），
+    #    放模块级会起两份线程、同步两次。lifespan 只在工作进程里跑。
+    sync_boot = start_background_sync(run_first=True)
+    if not sync_boot.get("started"):
+        print(f"[sync] 未启动：{sync_boot.get('reason')}")
+
     yield
+
+    stop_background_sync()
     engine.dispose()
 
 

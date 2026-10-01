@@ -690,6 +690,45 @@ GET /health -> { "status": "ok", "db_path": "...", "db_exists": true }
 - 用途：启动自检、确认数据落在哪个文件，以及数据说明页（2.17）显示路径。
 - 该接口不涉及业务数据，无需鉴权（本项目本身也无鉴权）。
 
+4.11 GitHub 自动同步
+
+方法	路径	说明
+GET	/sync/status	同步配置与运行状态
+
+`GET /sync/status` 响应字段：
+`enabled`、`configured`、`ready`、`repo_url`、`token_present`、
+`interval_minutes`、`branch`、`thread_alive`、`dirty`、
+`watched`、`watched_dirs_gitignored`、`note`、`state`
+
+`token_present` 只表示"有没有配置 token"，**绝不回显内容**。
+`watched_dirs_gitignored` 如实标注 `data/`、`uploads/`、`backups/`
+是否被 `.gitignore` 忽略 —— 否则用户会误以为个人数据也同步上去了。
+`state` 内含 `last_action`、`last_commit`、`last_error`、`sync_count`
+等运行信息。
+
+方法	路径	说明
+POST	/sync/now	立即同步一次
+
+`POST /sync/now` 响应字段：
+`status`、`action`、`commit`、`pushed`、`message`、`reason`
+
+- 未启用或未配置 `GIT_SYNC_REPO_URL` 时返回 **409**（请求本身没问题，
+  是服务端状态不满足）；同步过程出错返回 **502**。
+- 已有同步在进行时返回 `status="busy"`，**不排队等待**。
+- 同步动作恒为 `git add -A` → 有改动则 `commit` → `push`。
+  `data/`、`uploads/`、`backups/` 被 `.gitignore` 忽略，
+  **不会**进入提交；它们仅用于触发变更检测。
+
+配置全部来自 `.env`（启动时由 `python-dotenv` 读取，真实环境变量优先）：
+`GIT_SYNC_ENABLED`、`GIT_SYNC_REPO_URL`、`GIT_SYNC_TOKEN`、
+`GIT_SYNC_INTERVAL_MINUTES`。
+
+Token **不写入 `.git/config`**：推送时通过 `GIT_ASKPASS` 临时注入，
+只存在于那一次 git 子进程的环境变量里。启动时还会检查 remote URL，
+若已含凭据则自动移除。
+
+本功能是本项目**唯一会联网**的部分，默认关闭。
+
 5. 关键逻辑
 5.1 记忆曲线
 text

@@ -167,6 +167,7 @@ python tools/verify_tags.py            # 标签：归一化、复用、联想、
 python tools/verify_notes.py           # 记事本：增删查改、软删除、标题/内容模糊搜索
 python tools/verify_settings.py        # 设置：默认值初始化、批量更新、校验、容错
 python tools/verify_data_service.py    # 数据说明页：路径解析、手动备份、导出 JSON
+python tools/verify_sync.py            # GitHub 自动同步：真推到临时 bare 仓库、token 不落盘
 python tools/verify_design_tokens.py   # 前端：style.css 与 UI 说明书的色彩/字体/间距/圆角/阴影/断点一致性
 python tools/verify_font.py            # 中文 PDF 渲染与字体嵌入
 python tools/verify_heic.py            # HEIC 读写与图片压缩管线
@@ -202,6 +203,39 @@ python tools/verify_ui.py http://127.0.0.1:8941/ <临时库路径>
 > 中间件 + 根路径返回 `index.html`），不需要这个脚手架。
 > 更省事的做法是直接跑 `python tools/verify_a11y.py <port>`，
 > 它自己会起脚手架、造数据、驱动浏览器。
+
+## GitHub 自动同步（可选，默认关闭）
+
+把仓库里的改动定期 `add` + `commit` + `push` 到 GitHub。
+这是本项目**唯一会联网**的部分，不开启就完全离线运行。
+
+> ⚠️ **只同步代码与文档。** `data/`、`uploads/`、`backups/`
+> 在 `.gitignore` 里是刻意忽略的（个人数据不入库），同步服务**不会**
+> 用 `-f` 绕开它们。这三个目录仅用于触发变更检测。
+> 意思是：**你的题库和图片不会被同步到 GitHub。**
+
+配置（复制 `.env.example` 为 `.env` 再改）：
+
+```bash
+GIT_SYNC_ENABLED=1
+GIT_SYNC_REPO_URL=https://github.com/<你的用户名>/<仓库名>.git
+GIT_SYNC_TOKEN=ghp_xxxxxxxx        # 需要 repo 写权限的 PAT
+GIT_SYNC_INTERVAL_MINUTES=10       # 每多少分钟检查一次
+```
+
+启动服务后即生效（首次同步在启动时自动执行）。相关接口：
+
+| 接口 | 说明 |
+|---|---|
+| `GET /sync/status` | 配置与运行状态；`token_present` 只报有无，不回显内容 |
+| `POST /sync/now` | 立即同步一次；未启用返回 409，出错返回 502 |
+
+**Token 不会落盘。** 推送时通过 `GIT_ASKPASS` 临时注入，只存在于那一次
+git 子进程的环境变量里，**不写入 `.git/config`**（把 token 拼进 remote URL
+会以明文永久留在磁盘上）。启动时还会检查 remote URL，若已含凭据则自动移除。
+自检 `python tools/verify_sync.py` 会直接断言 `.git/config` 里搜不到 token。
+
+`.env` 已被 `.gitignore` 忽略（含 `.env.*`，但保留 `.env.example` 入库）。
 
 ## 文档
 

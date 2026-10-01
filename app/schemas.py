@@ -598,3 +598,67 @@ class BackupResultOut(BaseModel):
     db_bytes: int
     image_count: int
     created_at: datetime
+
+
+# --------------------------------------------------------------------------
+# GitHub 自动同步（AGENTS.md 五）
+# --------------------------------------------------------------------------
+
+
+class SyncStateOut(BaseModel):
+    """同步运行时状态。"""
+
+    running: bool = False
+    last_attempt_at: datetime | None = None
+    last_success_at: datetime | None = None
+    last_error_at: datetime | None = None
+    last_error: str = ""
+    last_action: str = ""
+    last_commit: str = ""
+    last_push: str = ""
+    sync_count: int = 0
+    failure_count: int = 0
+    thread_alive: bool = False
+
+
+class WatchedDirOut(BaseModel):
+    """一个被监控的目录。"""
+
+    path: str
+    exists: bool
+    fingerprint: str
+    changed_since_last_sync: bool
+
+
+class SyncStatusOut(BaseModel):
+    """GET /sync/status。
+
+    	oken_present 只报"有没有配置 token"，**绝不回显内容**。
+    watched_dirs_gitignored 如实说明这三个目录不会入库 ——
+    否则用户会误以为数据也同步到 GitHub 了。
+    """
+
+    enabled: bool
+    configured: bool
+    ready: bool
+    repo_url: str
+    token_present: bool
+    interval_minutes: int
+    branch: str
+    thread_alive: bool
+    dirty: bool
+    watched: dict[str, WatchedDirOut]
+    watched_dirs_gitignored: dict[str, bool]
+    note: str
+    state: SyncStateOut
+
+
+class SyncRunOut(BaseModel):
+    """POST /sync/now 的结果。"""
+
+    status: str
+    action: str = ""
+    commit: str = ""
+    pushed: bool = False
+    message: str = ""
+    reason: str = ""
