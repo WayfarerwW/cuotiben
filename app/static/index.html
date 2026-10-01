@@ -54,8 +54,18 @@
 </head>
 
 <body>
-  <!-- Vue 挂载范围。所有交互由 js/app.js 接管。 -->
-  <div class="app" id="app" v-cloak
+  <!--
+    Vue 挂载范围。
+
+    注意：**根元素自身不要写任何指令**（`:class`、`v-if` 等）。
+    挂载点是 div#app 时，Vue 用 container.innerHTML 作为模板，根节点上原有的
+    属性会被 Vue 当作"静态属性"处理，指令解析不到 —— 表现是
+    `:class` 原样留在 DOM 里、类名永远不生效（这个坑实测踩过：
+    outerHTML 里能看到 `:class="{...}"` 与 data-v-app 并存）。
+    因此这里另起一层 .app 作为根元素，把动态绑定放进模板内容里。
+  -->
+  <div id="app">
+  <div class="app"
        :class="{ 'is-collapsed': sidebarCollapsed, 'is-drawer-open': drawerOpen }">
 
     <!-- ===================== 左侧侧边栏 ===================== -->
@@ -88,7 +98,7 @@
         <!-- 学科文件夹树（两级，可展开收起） -->
         <section class="sidebar__group" aria-label="学科文件夹">
           <div class="sidebar__group-title">
-            <span>学科</span>
+            <span class="sidebar__group-label">学科</span>
             <button class="icon-btn icon-btn--on-dark" type="button"
                     title="新建学科" aria-label="新建学科"
                     style="width:24px;height:24px"
@@ -126,7 +136,7 @@
             </li>
           </ul>
 
-          <p v-else class="text-aux" style="padding:8px;opacity:.6">
+          <p v-else class="text-aux sidebar__tree-hint">
             暂无学科，点击上方 + 新建
           </p>
         </section>
@@ -1005,6 +1015,14 @@
       </div>
     </div>
 
+    <!--
+      屏幕阅读器播报区（ui-design 第 8 节：状态变更用 aria-live）。
+      视觉上不可见但在无障碍树里可读；visual-ally-hidden 不用 display:none，
+      否则读屏软件也会忽略它。
+    -->
+    <div class="visually-hidden" role="status" aria-live="polite"
+         aria-atomic="true">{{ liveMessage }}</div>
+
     <!-- 图片预览 -->
     <div v-if="previewImage" class="modal-mask lightbox" @click.self="previewImage = null">
       <img :src="previewImage" alt="图片预览" @click="previewImage = null">
@@ -1027,6 +1045,7 @@
         </button>
       </div>
     </div>
+  </div>
   </div>
 
   <script src="js/vendor/vue.global.prod.js"></script>

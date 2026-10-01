@@ -127,6 +127,14 @@
       var loadError = ref('');
       var sidebarCollapsed = ref(false);
       var drawerOpen = ref(false);
+      var isMobile = ref(false);
+
+      /**
+       * 用户是否手动折叠过侧边栏。
+       * 手动选择优先于断点默认值（ui-design 7：平板端"默认"折叠为 64px），
+       * 否则用户在平板上点开又会立刻被 resize 折回去。
+       */
+      var sidebarUserSet = ref(false);
 
       /* ---------------- 数据 ---------------- */
       var folderTree = ref([]);
@@ -168,6 +176,8 @@
       var ratingPicked = ref(null);
       /** 刚打勾的题目 id（用于行背景短暂高亮）。 */
       var flashedQuestionId = ref(null);
+      /** 屏幕阅读器播报文案（aria-live，ui-design 第 8 节）。 */
+      var liveMessage = ref('');
 
       /* ---------------- 设置 ---------------- */
       var settingsForm = reactive({ intervals: [3, 7, 15, 30], backfill_limit: 20, backfill_reset_days: 14 });
@@ -300,6 +310,45 @@
         toast(msg, 'error', true);
       }
 
+      /* ================= 响应式（ui-design 第 7 节）================= */
+
+      var MOBILE_MAX = 767;      // < 768 移动端：抽屉
+      var TABLET_MAX = 1200;     // 768~1200 平板端：默认折叠 64px
+
+      function viewportWidth() {
+        return window.innerWidth
+          || document.documentElement.clientWidth
+          || 1280;
+      }
+
+      /**
+       * 按断点应用侧边栏默认宽度。
+       *
+       * 这三个断点的差异**必须用 JS 判断**，不能只靠 CSS 媒体查询：
+       *   - 平板端要"默认折叠"，但用户点开后应当能展开 —— 纯 CSS 无法表达
+       *     "默认值 + 用户覆盖"这种状态。
+       *   - 焦点管理、抽屉开合、键盘监听也都要知道当前断点。
+       * CSS 侧只负责「折叠态长什么样」，由 .is-collapsed 类驱动。
+       */
+      function applyBreakpoint() {
+        var w = viewportWidth();
+        isMobile.value = w <= MOBILE_MAX;
+        if (isMobile.value) {
+          // 移动端用抽屉，折叠与否无意义
+          drawerOpen.value = false;
+          return;
+        }
+        if (!sidebarUserSet.value) {
+          sidebarCollapsed.value = w <= TABLET_MAX;
+        }
+      }
+
+      /** 顶部的折叠按钮：记为用户的手动选择，之后不再被断点覆盖。 */
+      function toggleSidebar() {
+        sidebarCollapsed.value = !sidebarCollapsed.value;
+        sidebarUserSet.value = true;
+      }
+
       /* ================= 路由 ================= */
 
       function pageFromHash() {
@@ -350,10 +399,15 @@
 
       function loadReview() {
         return API.getReviewToday().then(function (list) {
+          var before = reviewQueue.value.length;
           reviewQueue.value = list || [];
           if (activeReviewId.value &&
               !reviewQueue.value.some(function (i) { return i.question_id === activeReviewId.value; })) {
             activeReviewId.value = null;
+          }
+          // 队列数量变化时播报（ui-design 8：状态变更用 aria-live）
+          if (reviewQueue.value.length !== before) {
+            announce('今日待复习 ' + reviewQueue.value.length + ' 题');
           }
         });
       }
@@ -529,6 +583,7 @@
             // 结果 next_review_at 永远是 undefined、Toast 显示 "—"。
             var next = record && record.next_review_at ? fmtDate(record.next_review_at) : '—';
             toast('已打勾，下次复习：' + next);
+            announce('已打勾，下次复习 ' + next);
             recomputeStats();
             if (options.flashId) { flashRow(options.flashId); }
             return loadFolderTree();
@@ -560,10 +615,14 @@
       /* ================= 通知面板 ================= */
 
       function toggleNotif() {
+        var wasOpen = notifOpen.value;
         notifOpen.value = !notifOpen.value;
         userMenuOpen.value = false;
         if (notifOpen.value) {
+          rememberFocus();
           loadReview().then(recomputeStats).catch(toastError);
+        } else if (wasOpen) {
+          restoreFocus();
         }
       }
 
@@ -587,16 +646,119 @@
         panelAnswerOpen.value = false;
       }
 
+      /* ================= 可访问性：焦点、Esc、点击外部（ui-design 第 8 节）================= */
+
+      var FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), '
+        + 'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+      /** 打开浮层前的焦点位置，关闭后归还（ui-design 8：焦点管理）。 */
+      var lastFocused = null;
+
+      /** 当前打开的弹窗元素；null 表示没有弹窗。 */
+      function openModalEl() {
+        return document.querySelector('.modal-mask .modal');
+      }
+
+      function modalIsOpen() {
+        return !!(questionEditor.open || exportDialog.open || previewImage.value);
+      }
+
+      function anyOverlayOpen() {
+        return modalIsOpen() || notifOpen.value || userMenuOpen.value;
+      }
+
+      /** 关闭所有浮层。Esc 与点击外部都走这里，保证行为一致。 */
+      function closeOverlays() {
+        if (questionEditor.open) { closeQuestionEditor(); return; }
+        if (exportDialog.open) { exportDialog.open = false; return; }
+        if (previewImage.value) { previewImage.value = null; return; }
+        if (notifOpen.value) { notifOpen.value = false; return; }
+        if (userMenuOpen.value) { userMenuOpen.value = false; }
+      }
+
       /**
-       * 全局键盘（ui-design 6.3：上一题/下一题支持键盘方向键）。
-       *
-       * 只处理「有复习上下文」时的方向键，其余按键一律放行，
-       * 避免抢掉输入框里的正常编辑。
+       * 弹窗打开时把焦点移入，并在弹窗内循环（focus trap）。
+       * 不这么做的话，Tab 会跑到弹窗背后的侧边栏与顶部栏上 ——
+       * 视觉上焦点"消失"在遮罩后面，键盘用户无法操作弹窗。
+       */
+      function trapFocus(event) {
+        var modal = openModalEl();
+        if (!modal) { return; }
+        var items = Array.prototype.filter.call(
+          modal.querySelectorAll(FOCUSABLE),
+          function (el) { return el.offsetParent !== null || el === document.activeElement; }
+        );
+        if (!items.length) { return; }
+        var first = items[0];
+        var last = items[items.length - 1];
+        var active = document.activeElement;
+
+        if (event.shiftKey) {
+          if (active === first || !modal.contains(active)) {
+            event.preventDefault();
+            last.focus();
+          }
+        } else if (active === last || !modal.contains(active)) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+
+      /** 弹窗打开时把焦点移进去（优先第一个可聚焦元素）。 */
+      function focusIntoModal() {
+        nextTick(function () {
+          var modal = openModalEl();
+          if (!modal) { return; }
+          var items = Array.prototype.filter.call(
+            modal.querySelectorAll(FOCUSABLE),
+            function (el) { return el.offsetParent !== null; }
+          );
+          if (items.length) { items[0].focus(); } else { modal.focus(); }
+        });
+      }
+
+      /** 关闭浮层后把焦点还给触发元素。 */
+      function restoreFocus() {
+        if (lastFocused && document.contains(lastFocused)) {
+          lastFocused.focus();
+        }
+        lastFocused = null;
+      }
+
+      /** 记录浮层打开前的焦点（在各 open 函数里调用）。 */
+      function rememberFocus() {
+        lastFocused = document.activeElement;
+      }
+
+      /** 严格模式下给 aria-live 区域播报一句话。 */
+      function announce(text) {
+        liveMessage.value = '';
+        nextTick(function () { liveMessage.value = text; });
+      }
+
+      /**
+       * 全局键盘：Esc 关闭浮层、Tab 在弹窗内循环、方向键切题。
+       * 只在有浮层时不劫持方向键以外的按键。
        */
       function onGlobalKeydown(event) {
         var tag = (event.target && event.target.tagName) || '';
         var typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
           || (event.target && event.target.isContentEditable);
+
+        // Esc：关弹窗 / 关下拉（输入框里也允许，符合"Esc 关闭弹窗"的预期）
+        if (event.key === 'Escape' && anyOverlayOpen()) {
+          event.preventDefault();
+          closeOverlays();
+          restoreFocus();
+          return;
+        }
+
+        // Tab：弹窗打开时把焦点锁在弹窗内
+        if (event.key === 'Tab' && modalIsOpen()) {
+          trapFocus(event);
+          return;
+        }
+
         if (typing || event.altKey || event.ctrlKey || event.metaKey) { return; }
 
         // 通知面板展开中：←/→ 切上一题/下一题
@@ -620,6 +782,18 @@
             stepReviewCard(event.key === 'ArrowRight' ? 1 : -1);
           }
         }
+      }
+
+      /** 点击浮层外部时关闭（通知面板、用户菜单）。 */
+      function onDocumentClick(event) {
+        if (!notifOpen.value && !userMenuOpen.value) { return; }
+        var target = event.target;
+        if (target && target.closest
+            && (target.closest('.notif') || target.closest('.dropdown'))) {
+          return;   // 点在面板/菜单自身或其触发按钮上，交给各自的 @click 处理
+        }
+        notifOpen.value = false;
+        userMenuOpen.value = false;
       }
 
       /** 复习页按 ←/→ 滚动到上/下一张卡片。 */
@@ -672,7 +846,9 @@
         questionForm.is_starred = q ? !!q.is_starred : false;
         tagDraft.value = '';
         tagSuggestions.value = [];
+        rememberFocus();
         questionEditor.open = true;
+        focusIntoModal();
 
         // 进入弹窗时检测草稿，提示恢复（AGENTS.md 4.5）
         var raw = storage.get(questionDraftKey(questionEditor.id));
@@ -695,6 +871,7 @@
         questionEditor.open = false;
         questionEditor.draftNotice = '';
         questionDraftStatus.value = '';
+        restoreFocus();
       }
 
       function onQuestionEdit() {
@@ -979,7 +1156,9 @@
 
       function openExport() {
         exportForm.folder_id = currentFolderId.value || null;
+        rememberFocus();
         exportDialog.open = true;
+        focusIntoModal();
         if (!tags.value.length) { loadTags(); }
       }
 
@@ -1040,6 +1219,9 @@
       onMounted(function () {
         window.addEventListener('hashchange', onHashChange);
         window.addEventListener('keydown', onGlobalKeydown);
+        document.addEventListener('click', onDocumentClick);
+        window.addEventListener('resize', applyBreakpoint);
+        applyBreakpoint();
         loadPage(currentPage.value);
         // 通知每 60s 轮询（requirements 2.9 要求 30~60s）
         pollTimer = window.setInterval(function () {
@@ -1052,6 +1234,8 @@
       onUnmounted(function () {
         window.removeEventListener('hashchange', onHashChange);
         window.removeEventListener('keydown', onGlobalKeydown);
+        document.removeEventListener('click', onDocumentClick);
+        window.removeEventListener('resize', applyBreakpoint);
         window.clearInterval(pollTimer);
         window.clearInterval(savedAtTicker);
       });
@@ -1125,7 +1309,9 @@
         // 方法
         go: go,
         refreshCurrent: refreshCurrent,
-        toggleSidebar: function () { sidebarCollapsed.value = !sidebarCollapsed.value; },
+        toggleSidebar: toggleSidebar,
+        isMobile: isMobile,
+        liveMessage: liveMessage,
         toggleFolder: toggleFolder,
         selectFolder: selectFolder,
         promptNewSubject: promptNewSubject,
