@@ -3,3 +3,16 @@ __pycache__/
 *.pyc
 .venv/
 node_modules/
+
+# PoC / 验证脚本的运行产物（可随时重新生成，不入库）
+poc_out/
+
+# SQLite 数据库与备份产物（数据不入库）
+data/*.db
+data/*.db-journal
+backups/*.db
+backups/*.zip
+
+# 上传的图片（用户数据，不入库；保留目录占位）
+uploads/*
+!uploads/.gitkeep

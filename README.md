@@ -34,31 +34,79 @@ cuotiben/
 ├── data/                  # SQLite 数据库
 ├── uploads/               # 图片（按年月日分片，文件名 UUID）
 ├── backups/               # 数据库每日备份
-├── fonts/                 # 中文字体（PDF 导出用）
+├── fonts/                 # 中文字体（PDF 导出用，Noto Sans SC）
+├── tools/                 # 环境自检脚本（verify_font / verify_heic）
+├── poc_out/               # 自检产物（已在 .gitignore 忽略）
 ├── requirements.txt
 └── README.md
 ```
 
 ## 安装与运行
 
+### 1. Python 依赖
+
 ```bash
-# 1. 创建虚拟环境
+# 创建虚拟环境
 python -m venv .venv
 # Windows
 .venv\Scripts\activate
 # macOS / Linux
 source .venv/bin/activate
 
-# 2. 安装依赖
 pip install -r requirements.txt
+```
 
-# 3. 启动（启动脚本 run.py 随后端实现一并添加）
+> 注意：`C:\msys64\ucrt64\bin` 里也有一个 `python.exe`。不要把该目录放在 PATH 前面，
+> 否则 `python` 会解析到 MSYS2 的解释器，报 `No module named 'weasyprint'`。
+> 启动时请用虚拟环境里的解释器（或绝对路径）。
+
+### 2. WeasyPrint 原生库（PDF 导出必需，Windows）
+
+`pip install weasyprint` **不含** Pango / GObject / Cairo 等原生库，Windows 上必须另装，
+否则 `import weasyprint` 直接失败：
+
+```
+OSError: cannot load library 'libgobject-2.0-0'
+```
+
+用 MSYS2 提供（一次性安装）：
+
+```powershell
+winget install --id MSYS2.MSYS2 --silent --accept-package-agreements --accept-source-agreements
+```
+
+```bash
+# 国内建议先把 /etc/pacman.d/mirrorlist.mingw 首行换成清华源，否则会下载超时：
+#   Server = https://mirrors.tuna.tsinghua.edu.cn/msys2/mingw/$repo/
+pacman -S --noconfirm --needed \
+  mingw-w64-ucrt-x86_64-pango mingw-w64-ucrt-x86_64-gdk-pixbuf2 \
+  mingw-w64-ucrt-x86_64-libffi mingw-w64-ucrt-x86_64-harfbuzz \
+  mingw-w64-ucrt-x86_64-fontconfig mingw-w64-ucrt-x86_64-freetype \
+  mingw-w64-ucrt-x86_64-glib2
+```
+
+装入 `C:\msys64\ucrt64\bin`。若装到别处，用环境变量 `CUOTIBEN_GTK_BIN`
+指向含 `libgobject-2.0-0.dll` 的目录，或设置 `MSYS2_ROOT`。
+
+详见 [docs/poc-weasyprint.md](docs/poc-weasyprint.md)。**装不上不影响录题、复习等核心功能，
+只影响 PDF 导出。**
+
+### 3. 启动
+
+```bash
 python run.py
 ```
 
 启动后浏览器访问 <http://localhost:8000>。
 
-> 当前仓库处于**初始化阶段**：仅完成目录骨架与依赖清单，业务代码尚未实现。
+> 当前仓库处于**初始化阶段**：已完成目录骨架、依赖清单、环境验证，业务代码尚未实现。
+
+### 环境自检
+
+```bash
+python tools/verify_font.py    # 验证中文 PDF 渲染与字体嵌入
+python tools/verify_heic.py    # 验证 HEIC 读写与图片压缩管线
+```
 
 ## 文档
 
@@ -68,6 +116,7 @@ python run.py
 |---|---|
 | [docs/requirements.md](docs/requirements.md) | 功能、数据模型、接口、关键逻辑、验收标准 |
 | [docs/ui-design.md](docs/ui-design.md) | 色彩、字体、间距、组件、交互、响应式 |
+| [docs/poc-weasyprint.md](docs/poc-weasyprint.md) | PoC 结论：WeasyPrint 中文渲染、字体选型、HEIC 读写 |
 | [AGENTS.md](AGENTS.md) | 代码规范、关键规则（打勾逻辑、时区、命名等） |
 
 ## 数据位置
@@ -77,4 +126,6 @@ python run.py
 | 数据库 | `data/cuotiben.db` |
 | 图片 | `uploads/YYYY/MM/DD/{uuid}.jpg` |
 | 备份 | `backups/` |
-| 中文字体 | `fonts/` |
+| 中文字体 | `fonts/NotoSansSC-VF.ttf`（Noto Sans SC，SIL OFL 1.1） |
+| 环境自检脚本 | `tools/` |
+
