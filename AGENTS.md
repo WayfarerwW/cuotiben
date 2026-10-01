@@ -251,8 +251,9 @@ feat(review): 记忆曲线与打勾重置
 feat(ui): 通知栏内嵌复习视图
 
 fix(upload): 修复 HEIC 图片无法识别
+```
 
-六、风险提示（优先处理）
+## 六、风险提示（优先处理）
 WeasyPrint 中文渲染：PDF 导出前先做 PoC，确认中文字体不显示为方框
 
 HEIC 支持：pillow-heif 必须在依赖清单中
@@ -261,7 +262,7 @@ HEIC 支持：pillow-heif 必须在依赖清单中
 
 通知栏复习视图：不要在通知面板内跳转页面，用组件内状态切换
 
-七、不要做的事
+## 七、不要做的事
 不要引入多用户、登录、鉴权（纯本地单机）
 
 不要引入 vue-router（用组件内状态切换）
@@ -274,8 +275,9 @@ HEIC 支持：pillow-heif 必须在依赖清单中
 
 不要自行修改 UI 设计说明书的视觉参数
 
-八、目录约定
-text
+## 八、目录约定
+
+```text
 cuotiben/
 ├── docs/                  # 需求 + UI 说明书（默认不改，变更需明确指示）
 ├── AGENTS.md              # 本文件
@@ -298,7 +300,9 @@ cuotiben/
 ├── run.py
 ├── start.bat
 └── start.sh
-九、验收
+```
+
+## 九、验收
 每完成一个功能模块，对照 docs/requirements.md 第 8 节验收标准逐条检查。
 
 ## 十、TODO：可访问性收尾（部分已实现，其余待做）
@@ -366,41 +370,11 @@ cuotiben/
 
 ### 10.8 验证方式
 - [x] `tools/verify_responsive.py`（20 项）：三个断点 + Esc/焦点移入
-- [x] `tools/verify_a11y.py`（39 项，真浏览器）：锁背景滚动、Tab/Shift+Tab
+- [x] `tools/verify_a11y.py`（49 项，真浏览器）：锁背景滚动、Tab/Shift+Tab
       循环不逃逸、关闭后归还焦点（遮罩与 Esc 两条路径）、下拉 ↑/↓ + 循环 +
       Home/End、Enter 触发、Esc 关闭、点击外部关闭、用户菜单键盘、
-      表格 `<caption>` 对读屏可见
+      表格 `<caption>` 对读屏可见、打勾与笔记草稿的 aria-live 实际播报文本、
+      超 500 题时的分页迁移警告（第二遍运行，塞够数据后重新加载页面捕获
+      console.warn）
 - [x] 未做（明确记录，不算已完成）：标签输入联想项仅支持 Tab/点击，
       **没有** ↑/↓ 选择。该项不在本次要求范围内，见 10.5。
-
-
-
-text
-
----
-
-## 使用方式
-
-**第一步**：在项目根目录创建这三个文件：
-
-```bash
-mkdir -p docs
-# 把上面三个代码块分别保存为：
-#   docs/requirements.md
-#   docs/ui-design.md
-#   AGENTS.md
-第二步：初始化 Git 并提交：
-
-bash
-git init
-git add -A
-git commit -m "docs: 添加需求文档、UI 说明书、AGENTS.md"
-git remote add origin https://github.com/你的用户名/cuotiben.git
-git push -u origin main
-第三步：在 DSH 里开始开发。每一步的提示词只需写：
-
-参考 docs/requirements.md 第 X 节 + docs/ui-design.md 第 Y 节。任务：<具体做什么>。
-
-DSH 会自动去读文档，不用你每次贴全文。
-
-第四步：如果 DSH 支持 AGENTS.md 自动加载，它会自动遵守全局规则（打勾逻辑、时区、命名等），你不需要在每步提示词里重复。

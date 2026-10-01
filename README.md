@@ -150,10 +150,12 @@ chmod +x start.sh
 ```bash
 python tools/verify_launch.py          # 启动可访问性：run.py 起服务、静态资源无 404、Vue 挂载
 python tools/verify_responsive.py      # 响应式：三个断点 + Esc/焦点移入（真浏览器）
+python tools/verify_a11y.py            # 可访问性：锁滚动/Tab 循环/焦点归还/下拉键盘
 python tools/check_contrast.py         # 对比度：文字×底色组合是否达 WCAG AA 4.5:1
 python tools/poc_weasyprint_cjk.py     # PDF 中文渲染 PoC（字体嵌入 + 中文可提取）
 python tools/verify_export.py          # PDF 导出：五个 scope、答案另起一页、不跨页
 python tools/verify_export_http.py     # PDF 导出 HTTP 层：响应头/422/线程池不阻塞事件循环
+python tools/render_pdf_preview.py     # 把导出的 PDF 渲染成 PNG，便于肉眼确认版式
 python tools/verify_db_schemas.py      # 数据库连接、建表、settings 默认值、Pydantic schema
 python tools/verify_models.py          # ORM 表结构、外键级联、datetime 往返
 python tools/verify_softdelete.py      # 软删除与部分唯一索引
@@ -193,8 +195,12 @@ python tools/_serve_for_ui_test.py 8941 <harness.html 路径> <临时库路径>
 python tools/verify_ui.py http://127.0.0.1:8941/ <临时库路径>
 ```
 
-> 这两个工具名以下划线开头，是**测试脚手架**，不是产品代码：
-> 真实部署时前端应当由 `app/main.py` 直接提供（目前尚未挂载，见「已知缺口」）。
+> `tools/_serve_for_ui_test.py` 以下划线开头，是**测试脚手架**，不是产品代码：
+> 它只是为了让"静态前端 + API + 测试页"同源，便于浏览器驱动。
+> 真实运行时前端由 `app/main.py` 直接提供（已挂载：`serve_frontend_assets`
+> 中间件 + 根路径返回 `index.html`），不需要这个脚手架。
+> 更省事的做法是直接跑 `python tools/verify_a11y.py <port>`，
+> 它自己会起脚手架、造数据、驱动浏览器。
 
 ## 文档
 
@@ -216,4 +222,23 @@ python tools/verify_ui.py http://127.0.0.1:8941/ <临时库路径>
 | 备份 | `backups/` |
 | 中文字体 | `fonts/NotoSansSC-VF.ttf`（Noto Sans SC，SIL OFL 1.1） |
 | 环境自检脚本 | `tools/` |
+
+## 使用方式（在本仓库上继续开发时）
+
+需求文档与 UI 说明书是**基线**：默认不改，实现与文档冲突时先说明冲突，
+由人决定改文档还是改实现（见 [AGENTS.md](AGENTS.md) 3.6）。
+
+每一步的提示词只需写清「参考哪一节 + 要做什么」，不必把文档全文贴进来：
+
+```
+参考 docs/requirements.md 第 X 节 + docs/ui-design.md 第 Y 节。任务：<具体做什么>。
+```
+
+若工具支持自动加载 [AGENTS.md](AGENTS.md)，其中的全局规则
+（打勾逻辑、时区、命名、分层等）会自动生效，无需在每步提示词里重复。
+
+> 本仓库最初是由三个文件生成出来的（`docs/requirements.md`、
+> `docs/ui-design.md`、`AGENTS.md`），那份"从零创建仓库"的引导步骤
+> 已经完成、也已从 AGENTS.md 移到本文件；AGENTS.md 现在只保留运行时规则。
+
 
