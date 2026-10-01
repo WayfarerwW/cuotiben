@@ -112,6 +112,7 @@ python tools/verify_questions_service.py # questions 业务逻辑（标签归一
 python tools/verify_image_service.py   # 图片压缩（1080px/JPEG q75/≤300KB）、上传接口、静态挂载
 python tools/verify_review_service.py  # 复习：首条记录、打勾重置、撤销、今日边界、补卡与重置积压
 python tools/verify_tags.py            # 标签：归一化、复用、联想、多标签 AND/OR、计数
+python tools/verify_notes.py           # 记事本：增删查改、软删除、标题/内容模糊搜索
 python tools/verify_font.py            # 中文 PDF 渲染与字体嵌入
 python tools/verify_heic.py            # HEIC 读写与图片压缩管线
 python tools/audit_routes.py           # 接口审计：命名一致性 + 文档与实现的字段级差异

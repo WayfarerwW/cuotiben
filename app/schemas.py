@@ -423,11 +423,16 @@ class NoteOut(OrmBase):
 
 
 class NoteListItem(OrmBase):
-    """列表项：带一段内容摘要，避免列表拉全文。"""
+    """列表项。
+
+    按前端契约返回 `content` 本身。极长的笔记会把列表响应撑大，
+    因此超过 MAX_LIST_CONTENT 时截断（见 note_service），
+    详情接口始终返回完整内容。
+    """
 
     id: int
     title: str | None
-    summary: str | None = None
+    content: str | None
     question_id: int | None
     updated_at: datetime
 

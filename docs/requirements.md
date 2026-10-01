@@ -548,13 +548,41 @@ GET	/review/backfill/stats	补卡统计
 - `backlog_count`：当前仍处于积压区（逾期 ≥14 天）的题目数。
 
 4.6 记事本
+
 方法	路径	说明
 POST	/notes	新建
 GET	/notes	列表
+
+`GET /notes` 响应字段（按 `updated_at` 倒序）：
+`id`、`title`、`content`、`question_id`、`updated_at`
+
+- 列表返回 `content` 本身，但超过 200 字会截断并追加省略号（列表只用于预览）；
+  详情始终返回完整内容。
+- `title` 与 `content` 都可空（允许先建空笔记再写）。
+
+方法	路径	说明
+GET	/notes/search?q=	搜索
+
+`GET /notes/search?q=` 响应字段：
+`id`、`title`、`content`、`question_id`、`updated_at`
+
+关键词同时匹配 `title` 与 `content`，按 `updated_at` 倒序。
+`q` 为空时返回空数组（不返回全部）；支持 `limit`（默认 100，范围 1~500）。
+
+方法	路径	说明
 GET	/notes/{id}	详情
+
+`GET /notes/{id}` 响应字段：
+`id`、`title`、`content`、`question_id`、`created_at`、`updated_at`、`deleted_at`
+
+方法	路径	说明
 PUT	/notes/{id}	编辑
 DELETE	/notes/{id}	删除
-GET	/notes/search?q=	搜索
+
+- `PUT` 只更新请求体里出现的字段；传 `null` 或空串表示清空该字段。
+  编辑会自动刷新 `updated_at`。
+- `DELETE` 为软删除（置 `deleted_at`），记录保留在库中。
+
 4.7 导出
 方法	路径	说明
 POST	/export/pdf	PDF 导出
