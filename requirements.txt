@@ -1,0 +1,25 @@
+# 错题本 · 运行依赖
+# 安装：pip install -r requirements.txt
+
+# Web 后端
+fastapi
+uvicorn[standard]
+python-multipart
+
+# 数据库
+sqlalchemy
+
+# 数据校验
+pydantic
+python-dotenv
+
+# 图片处理（pillow-heif 用于 HEIC 支持，必须显式依赖）
+pillow
+pillow-heif
+
+# PDF 导出
+weasyprint
+jinja2
+
+# 备份 / 版本管理
+GitPython
