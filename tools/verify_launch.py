@@ -70,6 +70,21 @@ def wait_ready(base: str, proc: subprocess.Popen, seconds: int = 40) -> bool:
     return False
 
 
+def port_in_use(port: int) -> bool:
+    """端口是否已被占用。
+
+    必须提前检查：如果 8000 上已经有一个旧的服务在跑（比如上次调试留下的
+    uvicorn reload 工作进程），本脚本新起的服务会绑定失败，而断言却打在
+    **那个旧服务**上 —— 会出现"绿色通过"但验证的其实不是本次代码的情况。
+    调试时就被这个坑过很久（旧进程还注册着没有 /__harness 的旧应用）。
+    """
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(1)
+        return sock.connect_ex(("127.0.0.1", port)) == 0
+
+
 def main() -> int:
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
     base = f"http://127.0.0.1:{port}"
@@ -77,6 +92,12 @@ def main() -> int:
     print("=" * 78)
     print("启动与可访问性验证")
     print("=" * 78)
+
+    if port_in_use(port):
+        print(f"端口 {port} 已被占用，请先停止那个服务再运行本脚本。")
+        print("（否则断言会打在旧服务上，验的不是本次代码）")
+        print(f"  Windows: netstat -ano | findstr :{port}   然后 taskkill /F /T /PID <pid>")
+        return 3
 
     tmp = Path(tempfile.mkdtemp(prefix="cuotiben_launch_"))
     db = tmp / "launch.db"
@@ -227,9 +248,18 @@ def main() -> int:
 
 
 # 在被测页面的真实 URL 上收集渲染结果（同源 iframe，可读 DOM）
+# 用轮询等待应用真正挂载，而不是固定 sleep —— 固定等待在机器忙时会偶发失败。
 RENDER_HARNESS = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
 <title>render-check</title></head><body><script>
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
+async function until(fn, timeout) {
+  const end = Date.now() + (timeout || 15000);
+  while (Date.now() < end) {
+    try { const v = fn(); if (v) return v; } catch (e) {}
+    await wait(200);
+  }
+  return null;
+}
 (async () => {
   const errors = [];
   window.addEventListener('error', (e) => errors.push(String(e.message)));
@@ -237,12 +267,23 @@ const wait = (ms) => new Promise(r => setTimeout(r, ms));
   f.style.cssText = 'width:1400px;height:950px;border:0';
   document.body.appendChild(f);
   f.src = '__BASE__/';
-  await wait(4000);
+
+  // 等到 #app 上出现 Vue 实例（v-cloak 被移除即说明已挂载）
+  const app = await until(() => {
+    const d = f.contentDocument;
+    if (!d) return null;
+    const el = d.getElementById('app');
+    if (!el || el.hasAttribute('v-cloak')) return null;
+    return el;
+  }, 25000);
+  // 再等首屏数据到位（统计卡片渲染出来）
+  await until(() => f.contentDocument.querySelectorAll('.stat-card__value').length, 15000);
+  await wait(300);
+
   let out = { errors };
   try {
     const w = f.contentWindow, d = f.contentDocument;
     out.vue = typeof w.Vue !== 'undefined';
-    const app = d.getElementById('app');
     out.appClass = app ? app.className : null;
     const leftover = d.body.innerHTML.match(/\\{\\{[^}]*\\}\\}/g);
     out.rawTemplate = leftover ? leftover.join(',') : '';
