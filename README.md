@@ -114,6 +114,7 @@ python tools/verify_review_service.py  # 复习：首条记录、打勾重置、
 python tools/verify_tags.py            # 标签：归一化、复用、联想、多标签 AND/OR、计数
 python tools/verify_notes.py           # 记事本：增删查改、软删除、标题/内容模糊搜索
 python tools/verify_settings.py        # 设置：默认值初始化、批量更新、校验、容错
+python tools/verify_design_tokens.py   # 前端：style.css 与 UI 说明书的色彩/字体/间距/圆角/阴影/断点一致性
 python tools/verify_font.py            # 中文 PDF 渲染与字体嵌入
 python tools/verify_heic.py            # HEIC 读写与图片压缩管线
 python tools/audit_routes.py           # 接口审计：命名一致性 + 文档与实现的字段级差异

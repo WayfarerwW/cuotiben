@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="错题本 · 纯本地单机运行的错题管理与记忆曲线复习工具">
+  <title>错题本</title>
+
+  <!--
+    视觉体系见 docs/ui-design.md 第 2、3 节（硬约束，AGENTS.md 3.2）。
+    结构说明：
+      - 本文件只负责骨架与语义结构，样式全部在 css/style.css
+      - 图标用内联 SVG sprite（见下方 <svg> 定义块），不依赖任何外部资源
+      - 页面内不写死业务数据，动态内容由 js/app.js 挂载（见各处的 data-* 钩子）
+  -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+  <!-- ===================== 图标 sprite（内联，无外部依赖）===================== -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+    <symbol id="i-logo" viewBox="0 0 24 24">
+      <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10l2 2.5h6.5A1.5 1.5 0 0 1 20 8v10a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18z"/>
+      <path d="M8.5 13.5l2 2 4-4.5"/>
+    </symbol>
+    <symbol id="i-home" viewBox="0 0 24 24">
+      <path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4v-5H9v5H5a1 1 0 0 1-1-1z"/>
+    </symbol>
+    <symbol id="i-questions" viewBox="0 0 24 24">
+      <rect x="4" y="4" width="16" height="16" rx="2"/>
+      <path d="M8 9h8M8 13h8M8 17h5"/>
+    </symbol>
+    <symbol id="i-review" viewBox="0 0 24 24">
+      <path d="M20 12a8 8 0 1 1-2.3-5.6"/>
+      <path d="M20 4v4h-4"/>
+      <path d="M9 12.5l2 2 4-4.5"/>
+    </symbol>
+    <symbol id="i-notes" viewBox="0 0 24 24">
+      <path d="M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/>
+      <path d="M15 3v4h4"/>
+      <path d="M9 12h6M9 16h4"/>
+    </symbol>
+    <symbol id="i-stats" viewBox="0 0 24 24">
+      <path d="M5 20V10M12 20V4M19 20v-7"/>
+    </symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.5-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 4a2 2 0 1 1 4 0 1.7 1.7 0 0 0 2.9 1.5l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 11a2 2 0 1 1 0 4 1.7 1.7 0 0 0-1.6 1z"/>
+    </symbol>
+    <symbol id="i-search" viewBox="0 0 24 24">
+      <circle cx="11" cy="11" r="6"/>
+      <path d="M20 20l-4.3-4.3"/>
+    </symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24">
+      <path d="M12 5v14M5 12h14"/>
+    </symbol>
+    <symbol id="i-download" viewBox="0 0 24 24">
+      <path d="M12 4v10"/>
+      <path d="M8 11l4 4 4-4"/>
+      <path d="M5 19h14"/>
+    </symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24">
+      <path d="M18 15V10a6 6 0 1 0-12 0v5l-1.5 2.5h15z"/>
+      <path d="M10 20a2 2 0 0 0 4 0"/>
+    </symbol>
+    <symbol id="i-user" viewBox="0 0 24 24">
+      <circle cx="12" cy="8.5" r="3.5"/>
+      <path d="M5 20a7 7 0 0 1 14 0"/>
+    </symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 24 24">
+      <path d="M6 9.5l6 6 6-6"/>
+    </symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 24 24">
+      <path d="M9.5 6l6 6-6 6"/>
+    </symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24">
+      <path d="M4 7h16M4 12h16M4 17h16"/>
+    </symbol>
+    <symbol id="i-panel-left" viewBox="0 0 24 24">
+      <rect x="3" y="4" width="18" height="16" rx="2"/>
+      <path d="M9.5 4v16"/>
+    </symbol>
+    <symbol id="i-plus-folder" viewBox="0 0 24 24">
+      <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10l2 2.5h6.5A1.5 1.5 0 0 1 20 8v10a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18z"/>
+      <path d="M12 11v5M9.5 13.5h5"/>
+    </symbol>
+    <symbol id="i-check" viewBox="0 0 24 24">
+      <path d="M5 12.5l4.5 4.5L19 7"/>
+    </symbol>
+    <symbol id="i-close" viewBox="0 0 24 24">
+      <path d="M6 6l12 12M18 6L6 18"/>
+    </symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="8.5"/>
+      <path d="M12 8v5M12 16h.01"/>
+    </symbol>
+    <symbol id="i-inbox" viewBox="0 0 24 24">
+      <path d="M4 13.5 6 5h12l2 8.5V19H4z"/>
+      <path d="M4 13.5h4l1 2.5h6l1-2.5h4"/>
+    </symbol>
+  </svg>
+
+  <!-- ===================== 应用骨架 ===================== -->
+  <div class="app" id="app">
+
+    <!-- ---------- 左侧固定侧边栏（260px / 折叠 64px）---------- -->
+    <aside class="sidebar" id="sidebar" aria-label="主导航">
+      <div class="sidebar__brand">
+        <span class="sidebar__brand-mark" aria-hidden="true">
+          <svg class="icon" aria-hidden="true"><use href="#i-logo"></use></svg>
+        </span>
+        <span class="sidebar__brand-text">错题本</span>
+      </div>
+
+      <div class="sidebar__scroll">
+        <!-- 功能导航区 -->
+        <nav class="sidebar__group" aria-label="功能导航">
+          <ul>
+            <li>
+              <a class="nav__item is-active" href="#/home" data-nav="home"
+                 aria-current="page" title="首页">
+                <svg class="icon" aria-hidden="true"><use href="#i-home"></use></svg>
+                <span class="nav__label">首页</span>
+              </a>
+            </li>
+            <li>
+              <a class="nav__item" href="#/questions" data-nav="questions" title="题目管理">
+                <svg class="icon" aria-hidden="true"><use href="#i-questions"></use></svg>
+                <span class="nav__label">题目管理</span>
+              </a>
+            </li>
+            <li>
+              <a class="nav__item" href="#/review" data-nav="review" title="今日复习">
+                <svg class="icon" aria-hidden="true"><use href="#i-review"></use></svg>
+                <span class="nav__label">今日复习</span>
+                <!-- 待复习数量由 js/app.js 填充 -->
+                <span class="nav__count num" data-bind="review-count"></span>
+              </a>
+            </li>
+            <li>
+              <a class="nav__item" href="#/notes" data-nav="notes" title="记事本">
+                <svg class="icon" aria-hidden="true"><use href="#i-notes"></use></svg>
+                <span class="nav__label">记事本</span>
+              </a>
+            </li>
+            <li>
+              <a class="nav__item" href="#/stats" data-nav="stats" title="统计分析">
+                <svg class="icon" aria-hidden="true"><use href="#i-stats"></use></svg>
+                <span class="nav__label">统计分析</span>
+              </a>
+            </li>
+            <li>
+              <a class="nav__item" href="#/settings" data-nav="settings" title="设置">
+                <svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg>
+                <span class="nav__label">设置</span>
+              </a>
+            </li>
+          </ul>
+        </nav>
+
+        <!-- 学科文件夹树：两级（学科 → 大类） -->
+        <section class="sidebar__group" aria-label="学科文件夹">
+          <div class="sidebar__group-title">
+            <span>学科</span>
+            <button class="icon-btn icon-btn--on-dark" type="button"
+                    data-action="new-subject" title="新建学科" aria-label="新建学科"
+                    style="width:24px;height:24px">
+              <svg class="icon icon--sm" aria-hidden="true"><use href="#i-plus-folder"></use></svg>
+            </button>
+          </div>
+
+          <!--
+            以下演示两项折叠状态与占位；真实数据由 js/app.js 依据
+            GET /folders/tree 渲染（含 children 与 question_count）。
+          -->
+          <ul class="tree" id="folder-tree">
+            <li class="tree__node">
+              <div class="tree__row" role="button" tabindex="0" aria-expanded="false">
+                <svg class="icon icon--sm tree__caret" aria-hidden="true">
+                  <use href="#i-chevron-right"></use>
+                </svg>
+                <span class="tree__dot" aria-hidden="true"></span>
+                <span class="tree__label">高等数学</span>
+                <span class="tree__count num">0</span>
+              </div>
+              <ul class="tree__children">
+                <li>
+                  <div class="tree__row" role="button" tabindex="0">
+                    <span class="tree__label">极限与连续</span>
+                    <span class="tree__count num">0</span>
+                  </div>
+                </li>
+                <li>
+                  <div class="tree__row" role="button" tabindex="0">
+                    <span class="tree__label">导数与微分</span>
+                    <span class="tree__count num">0</span>
+                  </div>
+                </li>
+              </ul>
+            </li>
+          </ul>
+
+          <p class="text-aux" data-bind="tree-hint" style="padding:8px;opacity:.6">
+            暂无学科，点击上方 + 新建
+          </p>
+        </section>
+      </div>
+
+      <!-- 用户信息区（固定底部） -->
+      <div class="sidebar__user">
+        <span class="avatar" aria-hidden="true">本</span>
+        <span class="sidebar__user-meta">
+          <span class="sidebar__user-name">本地用户</span>
+          <span class="sidebar__user-status">
+            <span class="status__dot" aria-hidden="true"></span>
+            数据存于本机
+          </span>
+        </span>
+      </div>
+    </aside>
+
+    <!-- 移动端抽屉遮罩 -->
+    <div class="drawer-mask" id="drawer-mask" hidden></div>
+
+    <!-- ---------- 顶部导航栏（64px）---------- -->
+    <header class="topbar" id="topbar">
+      <!-- 汉堡菜单：仅移动端可见 -->
+      <button class="icon-btn topbar__hamburger" type="button" id="btn-hamburger"
+              title="打开菜单" aria-label="打开菜单" aria-expanded="false">
+        <svg class="icon icon--lg" aria-hidden="true"><use href="#i-menu"></use></svg>
+      </button>
+
+      <!-- 折叠开关（桌面/平板） -->
+      <button class="icon-btn" type="button" id="btn-collapse"
+              title="折叠侧边栏" aria-label="折叠侧边栏" aria-expanded="true">
+        <svg class="icon icon--lg" aria-hidden="true"><use href="#i-panel-left"></use></svg>
+      </button>
+
+      <!-- 搜索框：单框双查（keyword + tag 两次请求，前端按 id 合并去重） -->
+      <div class="search" role="search">
+        <svg class="icon icon--sm search__icon" aria-hidden="true">
+          <use href="#i-search"></use>
+        </svg>
+        <label class="visually-hidden" for="global-search">全局搜索</label>
+        <input class="search__input" id="global-search" type="search"
+               placeholder="搜索题干、答案或标签…" autocomplete="off"
+               data-action="search">
+        <kbd class="search__kbd" aria-hidden="true">Ctrl K</kbd>
+      </div>
+
+      <span class="topbar__spacer"></span>
+
+      <!-- 操作按钮 + 通知 + 用户菜单 -->
+      <div class="topbar__actions">
+        <button class="btn btn--secondary" type="button" data-action="export-pdf">
+          <svg class="icon icon--sm" aria-hidden="true"><use href="#i-download"></use></svg>
+          <span class="btn__label">导出 PDF</span>
+        </button>
+
+        <button class="btn btn--primary" type="button" data-action="new-question">
+          <svg class="icon icon--sm" aria-hidden="true"><use href="#i-plus"></use></svg>
+          <span class="btn__label">新增题目</span>
+        </button>
+
+        <!-- 通知铃铛：数字角标 >99 显示 99+ -->
+        <div class="notif">
+          <button class="icon-btn bell" type="button" id="btn-bell"
+                  title="通知" aria-label="通知" aria-haspopup="dialog"
+                  aria-expanded="false" aria-controls="notif-panel">
+            <svg class="icon icon--lg" aria-hidden="true"><use href="#i-bell"></use></svg>
+            <span class="badge bell__badge" data-bind="notif-badge" hidden>0</span>
+            <span class="dot bell__badge" data-bind="notif-dot" hidden></span>
+          </button>
+
+          <!-- 通知面板：360px × 最多 480px，可滚动；复习视图内嵌，不跳页 -->
+          <section class="dropdown notif__panel" id="notif-panel" role="dialog"
+                   aria-label="通知" hidden>
+            <div class="notif__header">
+              <h2 class="notif__title">待复习</h2>
+              <button class="icon-btn" type="button" id="btn-bell-close"
+                      title="关闭" aria-label="关闭通知面板" style="width:28px;height:28px">
+                <svg class="icon icon--sm" aria-hidden="true"><use href="#i-close"></use></svg>
+              </button>
+            </div>
+
+            <!-- 通知列表由 js/app.js 依据 GET /review/today 渲染 -->
+            <div class="notif__list" id="notif-list">
+              <!--
+                单条通知展开的示例结构：点击列表项后在面板内直接展开复习视图，
+                不跳页（AGENTS.md 4.3 / ui-design 5.4）。
+                题干、图片、标签、答案、打勾与上一题/下一题都由 js/app.js 填充。
+              -->
+              <div class="notif__item is-unread">
+                <div class="notif__item-head">
+                  <span class="notif__item-title">例题：极限的夹逼准则</span>
+                  <span class="notif__item-time">今天</span>
+                </div>
+                <p class="notif__item-summary">求 lim(x→0) x·sin(1/x) 的值。</p>
+
+                <!-- 面板内嵌复习视图（不跳页、不遮挡内容） -->
+                <div class="notif__review">
+                  <div class="notif__item-actions">
+                    <button class="btn btn--secondary btn--sm" type="button"
+                            data-action="toggle-answer" aria-expanded="false">
+                      展开答案
+                    </button>
+                    <button class="btn btn--primary btn--sm" type="button"
+                            data-action="check">
+                      <svg class="icon icon--sm" aria-hidden="true">
+                        <use href="#i-check"></use>
+                      </svg>
+                      打勾
+                    </button>
+                    <button class="btn btn--text btn--sm" type="button"
+                            data-action="next-question">
+                      下一题
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="empty-state" data-empty="notif" hidden>
+                <svg class="icon icon--lg empty-state__art" aria-hidden="true"
+                     style="width:48px;height:48px">
+                  <use href="#i-check"></use>
+                </svg>
+                <span class="empty-state__title">今日没有待复习题目</span>
+                <span class="text-aux">到期的题目会自动出现在这里</span>
+              </div>
+            </div>
+
+            <div class="notif__footer">
+              <a class="btn btn--text" href="#/review">查看全部今日复习</a>
+            </div>
+          </section>
+        </div>
+
+        <!-- 用户菜单 -->
+        <div class="notif">
+          <button class="user-menu" type="button" id="btn-user"
+                  aria-haspopup="menu" aria-expanded="false" aria-controls="user-menu">
+            <span class="avatar avatar--sm" aria-hidden="true">本</span>
+            <span class="user-menu__name">本地用户</span>
+            <svg class="icon icon--sm" aria-hidden="true"><use href="#i-chevron-down"></use></svg>
+          </button>
+
+          <div class="dropdown dropdown--menu" id="user-menu" role="menu" hidden>
+            <button class="dropdown__item" type="button" role="menuitem"
+                    data-action="go-settings">
+              <svg class="icon icon--sm" aria-hidden="true"><use href="#i-settings"></use></svg>
+              设置
+            </button>
+            <button class="dropdown__item" type="button" role="menuitem"
+                    data-action="backup-db">
+              <svg class="icon icon--sm" aria-hidden="true"><use href="#i-inbox"></use></svg>
+              备份数据库
+            </button>
+            <div class="dropdown__divider" role="separator"></div>
+            <button class="dropdown__item" type="button" role="menuitem" disabled>
+              <svg class="icon icon--sm" aria-hidden="true"><use href="#i-user"></use></svg>
+              纯本地运行 · 无需登录
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- ---------- 主内容区（自适应宽度）---------- -->
+    <main class="main" id="main">
+      <div class="main__inner">
+
+        <!-- 页面标题区：标题 + 面包屑 + 页面级操作 -->
+        <div class="page-header">
+          <div>
+            <h1 class="page-title" data-bind="page-title">首页概览</h1>
+            <nav class="breadcrumb" aria-label="面包屑">
+              <span class="breadcrumb__current" data-bind="crumb">首页</span>
+            </nav>
+          </div>
+          <div class="page-actions">
+            <button class="btn btn--secondary btn--sm" type="button"
+                    data-action="refresh" aria-label="刷新">
+              <svg class="icon icon--sm" aria-hidden="true"><use href="#i-review"></use></svg>
+              <span class="btn__label">刷新</span>
+            </button>
+            <button class="btn btn--primary btn--sm" type="button"
+                    data-action="new-question" aria-label="新增题目">
+              <svg class="icon icon--sm" aria-hidden="true"><use href="#i-plus"></use></svg>
+              <span class="btn__label">新增题目</span>
+            </button>
+          </div>
+        </div>
+
+        <!--
+          统计卡片：结构示意。数值在接入 js/app.js 后由接口填充，
+          不在此写死任何业务数字。
+        -->
+        <section class="stat-grid" aria-label="学习统计">
+          <article class="card card--hoverable">
+            <p class="stat-card__label">错题总数</p>
+            <p class="stat-card__value num" data-bind="stat-total">—</p>
+          </article>
+          <article class="card card--hoverable">
+            <p class="stat-card__label">今日待复习</p>
+            <p class="stat-card__value num" data-bind="stat-due">—</p>
+          </article>
+          <article class="card card--hoverable">
+            <p class="stat-card__label">已掌握</p>
+            <p class="stat-card__value num" data-bind="stat-mastered">—</p>
+          </article>
+          <article class="card card--hoverable">
+            <p class="stat-card__label">积压（≥14 天）</p>
+            <p class="stat-card__value num" data-bind="stat-backlog">—</p>
+          </article>
+        </section>
+
+        <!-- 数据表格区：占主要垂直空间 -->
+        <section class="table-area" aria-label="最近错题">
+          <div class="empty-state">
+            <svg class="icon empty-state__art" aria-hidden="true">
+              <use href="#i-questions"></use>
+            </svg>
+            <span class="empty-state__title">还没有错题</span>
+            <span class="text-aux">新建学科与大类后，就可以录入第一道错题了</span>
+            <button class="btn btn--primary" type="button" data-action="new-question"
+                    style="margin-top:8px">
+              <svg class="icon icon--sm" aria-hidden="true"><use href="#i-plus"></use></svg>
+              新增题目
+            </button>
+          </div>
+        </section>
+
+        <!--
+          本步只交付骨架与设计系统（index.html + css/style.css）。
+          尚未实现：js/api.js、js/app.js。
+          下面的提示仅用于说明后续接入点，接入后应删除此块。
+        -->
+        <p class="placeholder">
+          骨架已就绪。动态数据接入点：<code>js/api.js</code>（封装 API 调用）与
+          <code>js/app.js</code>（用 <code>[data-bind]</code>、<code>[data-action]</code>
+          钩子绑定本页元素）。接口已全部可用：<code>/folders</code>、
+          <code>/questions</code>、<code>/tags</code>、<code>/review</code>、
+          <code>/notes</code>、<code>/settings</code>。
+        </p>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- Toast 反馈容器（成功 3s / 警告 5s / 错误手动关闭） -->
+  <div class="toast-stack" id="toast-stack" aria-live="polite" aria-atomic="false"></div>
+
+  <!--
+    js/api.js 与 js/app.js 尚未创建（本步只做骨架与设计系统）。
+    保留注释而非法引用，避免控制台出现 404；接入时取消注释即可。
+    <script src="js/api.js"></script>
+    <script src="js/app.js"></script>
+  -->
+</body>
+</html>
