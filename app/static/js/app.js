@@ -202,6 +202,18 @@
       var questionDraftStatus = ref('');
       var tagDraft = ref('');
       var tagSuggestions = ref([]);
+      /**
+       * 联想下拉是否打开。
+       *
+       * 不用 computed(tagSuggestions.length > 0)：Esc/Tab 关闭后还要能保留
+       * 输入内容，而 v-model 的 @input 又会重新触发搜索把下拉顶开 ——
+       * 需要一个独立开关来记住"用户主动关掉了"。
+       */
+      var tagSuggestOpen = ref(false);
+      /** 键盘高亮项索引；-1 表示没有高亮（此时回车按"新建标签"处理）。 */
+      var tagHighlight = ref(-1);
+      /** 是否用键盘移动过高亮（只影响 Enter 的语义，见 onTagKeydown）。 */
+      var tagKeyNavUsed = ref(false);
 
       /* ---------------- 记事本 ---------------- */
       var notesView = ref([]);
@@ -1070,6 +1082,8 @@
         if (questionForm.tags.indexOf(name) === -1) { questionForm.tags.push(name); }
         tagDraft.value = '';
         tagSuggestions.value = [];
+        tagSuggestOpen.value = false;
+        tagHighlight.value = -1;
         onQuestionEdit();
       }
 
@@ -1077,19 +1091,130 @@
         if (questionForm.tags.indexOf(name) === -1) { questionForm.tags.push(name); }
         tagDraft.value = '';
         tagSuggestions.value = [];
+        tagSuggestOpen.value = false;
+        tagHighlight.value = -1;
+        tagKeyNavUsed.value = false;
         onQuestionEdit();
       }
 
       function onTagSuggest() {
         var q = tagDraft.value.trim();
-        if (!q) { tagSuggestions.value = []; return; }
+        tagHighlight.value = -1;
+        tagKeyNavUsed.value = false;
+        if (!q) { tagSuggestions.value = []; tagSuggestOpen.value = false; return; }
         API.searchTags(q, 8)
           .then(function (list) {
             tagSuggestions.value = (list || []).filter(function (t) {
               return questionForm.tags.indexOf(t.name) === -1;
             });
+            tagSuggestOpen.value = tagSuggestions.value.length > 0;
           })
-          .catch(function () { tagSuggestions.value = []; });
+          .catch(function () {
+            tagSuggestions.value = [];
+            tagSuggestOpen.value = false;
+          });
+      }
+
+      /** 关闭联想下拉，但**保留输入内容**（Esc / Tab 的语义）。 */
+      function closeTagSuggest() {
+        tagSuggestOpen.value = false;
+        tagHighlight.value = -1;
+        tagKeyNavUsed.value = false;
+      }
+
+      /** 清空联想状态（选中之后）。 */
+      function resetTagSuggest() {
+        tagSuggestions.value = [];
+        tagSuggestOpen.value = false;
+        tagHighlight.value = -1;
+        tagKeyNavUsed.value = false;
+      }
+
+      /**
+       * 标签输入框的键盘处理（ui-design 8 的键盘可达性）。
+       *
+       * 语义说明（**两种 Enter 行为不同，是刻意的**）：
+       *   - ↑/↓ 选中某项后按 Enter：把该标签**填入输入框**并关闭下拉，
+       *     再由用户回车确认（此时走 addTag）—— 这是自动补全的常见做法，
+       *     让用户先看到填进去的内容再决定。
+       *   - 没有高亮时按 Enter：沿用原行为，**直接创建**输入框里的标签。
+       * 若把"选中建议"也做成直接成标签，用户就没有机会改这个词了。
+       */
+      function onTagKeydown(event) {
+        var key = event.key;
+        var wasOpen = tagSuggestOpen.value;
+
+        if (key === 'Escape') {
+          // 下拉没开时不拦 Esc：应当去关闭外层弹窗
+          if (!wasOpen) { return false; }
+          event.preventDefault();
+          event.stopPropagation();
+          closeTagSuggest();
+          return true;
+        }
+
+        if (key === 'Tab') {
+          // Tab 关闭下拉但保留输入，然后让 Tab 继续做焦点移动
+          if (wasOpen) { closeTagSuggest(); }
+          return false;
+        }
+
+        if (key === 'ArrowDown' || key === 'ArrowUp') {
+          if (!wasOpen) { return false; }
+          event.preventDefault();
+          event.stopPropagation();
+          var total = tagSuggestions.value.length;
+          if (!total) { return true; }
+          var step = key === 'ArrowDown' ? 1 : -1;
+          var next = tagHighlight.value + step;
+          if (tagHighlight.value === -1) {
+            // 从未高亮起步：↓ 落到第一项，↑ 落到最后一项
+            next = key === 'ArrowDown' ? 0 : total - 1;
+          } else if (next < 0) {
+            next = total - 1;          // 边界循环
+          } else if (next >= total) {
+            next = 0;
+          }
+          tagHighlight.value = next;
+          tagKeyNavUsed.value = true;
+          return true;
+        }
+
+        if (key === 'Enter') {
+          if (wasOpen && tagKeyNavUsed.value && tagHighlight.value >= 0) {
+            event.preventDefault();
+            event.stopPropagation();
+            var picked = tagSuggestions.value[tagHighlight.value];
+            if (picked) {
+              tagDraft.value = picked.name;   // 只填入，不直接成标签
+              closeTagSuggest();
+            }
+            return true;
+          }
+          if (wasOpen && tagHighlight.value >= 0) {
+            // 鼠标悬停高亮但没用键盘：按自动补全惯例取该项
+            event.preventDefault();
+            event.stopPropagation();
+            var hovered = tagSuggestions.value[tagHighlight.value];
+            if (hovered) {
+              tagDraft.value = hovered.name;
+              closeTagSuggest();
+            }
+            return true;
+          }
+          // 无高亮：保持原语义 —— 直接创建输入框里的标签
+          event.preventDefault();
+          addTag();
+          return true;
+        }
+
+        return false;
+      }
+
+      /** 鼠标悬停时同步高亮（与键盘共用同一份高亮状态）。 */
+      function hoverTagSuggest(index) {
+        tagHighlight.value = index;
+        tagKeyNavUsed.value = false;
       }
 
       function saveQuestion(continueAdding) {
@@ -1503,6 +1628,8 @@
         categoryOptions: categoryOptions,
         tagDraft: tagDraft,
         tagSuggestions: tagSuggestions,
+        tagSuggestOpen: tagSuggestOpen,
+        tagHighlight: tagHighlight,
         // 记事本
         notesView: notesView,
         noteForm: noteForm,
@@ -1554,6 +1681,8 @@
         addTag: addTag,
         pickTag: pickTag,
         onTagSuggest: onTagSuggest,
+        onTagKeydown: onTagKeydown,
+        hoverTagSuggest: hoverTagSuggest,
         saveQuestion: saveQuestion,
         newNote: newNote,
         selectNote: selectNote,

@@ -368,7 +368,159 @@ function blob(el) {
     }
   }
 
-  /* ============ 12. 题目数超阈值的分页提示 ============
+  /* ============ 12. 标签联想键盘导航 ============ */
+  /* 需要题目编辑弹窗：从题目页点「新增题目」打开，再在标签输入框里打字。 */
+  const addBtn = Array.from(d.querySelectorAll('button'))
+    .find(b => b.textContent.trim().includes('新增题目'))
+    || d.querySelector('.topbar__actions .btn--primary');
+  if (addBtn) { addBtn.click(); }
+  const tagInput = await until(() => d.getElementById('q-tags'), 6000);
+  c('题目编辑弹窗里有标签输入框', !!tagInput);
+  c('标签输入框是 combobox 语义',
+    !!tagInput && tagInput.getAttribute('role') === 'combobox',
+    tagInput ? tagInput.getAttribute('role') : '-');
+
+  if (tagInput) {
+    const suggestList = () => d.getElementById('tag-suggest-list');
+    const optionEls = () => Array.from(d.querySelectorAll('#tag-suggest-list [role="option"]'));
+    const activeIdx = () => optionEls().findIndex(
+      el => el.classList.contains('is-active'));
+    const combo = () => tagInput.getAttribute('aria-expanded');
+    /* 读应用自己写下的草稿（AGENTS.md 4.5：防抖 500ms 写 draft_question_new）。
+       断言语义时用它比数 DOM 里的 .tag 元素稳 —— 那是应用的既定状态记录。 */
+    const readDraftTags = () => {
+      try {
+        const raw = w.localStorage.getItem('draft_question_new');
+        return raw ? (JSON.parse(raw).tags || []) : [];
+      } catch (e) { return []; }
+    };
+
+    async function typeTag(text) {
+      tagInput.focus();
+      tagInput.value = text;
+      tagInput.dispatchEvent(new Event('input', { bubbles: true }));
+      // 等下拉真的打开（搜索是异步的）
+      return until(() => optionEls().length > 0, 6000);
+    }
+    function pressTag(k) {
+      const ev = new KeyboardEvent('keydown',
+        { key: k, bubbles: true, cancelable: true });
+      tagInput.dispatchEvent(ev);
+      return ev;
+    }
+
+    // 用前缀恰好命中多个标签的词，保证候选 ≥2（seed 里建了
+    // 重要极限 / 重要公式 / 重要定义）
+    await typeTag('重要');
+    await wait(400);
+    const opts = optionEls();
+    c('输入后出现联想列表（≥2 项，才能测移动与循环）',
+      !!suggestList() && opts.length >= 2, opts.length + ' 项');
+    c('下拉展开时 aria-expanded=true', combo() === 'true', combo());
+    c('列表有 role=listbox', !!suggestList()
+      && suggestList().getAttribute('role') === 'listbox');
+    c('选项有 role=option',
+      opts.length > 0 && opts.every(el => el.getAttribute('role') === 'option'));
+    c('初始没有高亮', activeIdx() === -1, 'idx=' + activeIdx());
+
+    if (opts.length >= 2) {
+      // ---- ↓ 移动高亮 ----
+      pressTag('ArrowDown');
+      await wait(150);
+      c('↓ 首次高亮落到第 1 项', activeIdx() === 0, 'idx=' + activeIdx());
+      c('高亮项 aria-selected=true',
+        optionEls()[0].getAttribute('aria-selected') === 'true');
+      c('aria-activedescendant 指向高亮项',
+        tagInput.getAttribute('aria-activedescendant') === 'tag-opt-0',
+        tagInput.getAttribute('aria-activedescendant'));
+      c('高亮不把焦点移出输入框', d.activeElement === tagInput, blob(d.activeElement));
+
+      pressTag('ArrowDown');
+      await wait(150);
+      c('↓ 移到第 2 项', activeIdx() === 1, 'idx=' + activeIdx());
+      pressTag('ArrowUp');
+      await wait(150);
+      c('↑ 回到第 1 项', activeIdx() === 0, 'idx=' + activeIdx());
+
+      // ---- 边界循环 ----
+      pressTag('ArrowUp');
+      await wait(150);
+      c('↑ 在首项循环到末项（边界循环）', activeIdx() === optionEls().length - 1,
+        'idx=' + activeIdx() + '/' + (optionEls().length - 1));
+      pressTag('ArrowDown');
+      await wait(150);
+      c('↓ 在末项循环回首项（边界循环）', activeIdx() === 0, 'idx=' + activeIdx());
+
+      // ---- Enter 选中，填入输入框 ----
+      // 从 data-tag-name 取准确名字：textContent 是「名字 + 计数」拼起来的，
+      // 用正则剥计数会把标签名自带的数字也吃掉（"重要极限3" -> "重要极限"）。
+      const curOpt = optionEls()[activeIdx()];
+      const wantName = (curOpt.getAttribute('data-tag-name') || '').trim();
+      c('联想项带 data-tag-name（供断言取准确名字）', wantName.length > 0, wantName);
+      pressTag('Enter');
+      await wait(350);
+      c('Enter 把选中项填入输入框', tagInput.value.trim() === wantName,
+        JSON.stringify(tagInput.value) + ' vs ' + JSON.stringify(wantName));
+      c('Enter 选中后关闭下拉', !suggestList() && combo() === 'false', combo());
+      c('Enter 选中后只填入、未直接成条目（留给用户确认）',
+        readDraftTags().indexOf(wantName) === -1,
+        JSON.stringify(readDraftTags()));
+
+      // ---- Esc 关闭下拉但保留输入 ----
+      await typeTag('重要');
+      await wait(250);
+      c('重新输入后下拉再次打开', !!suggestList(), combo());
+      const beforeVal = tagInput.value;
+      const evEsc = pressTag('Escape');
+      await wait(250);
+      c('Esc 关闭联想下拉', !suggestList() && combo() === 'false', combo());
+      c('Esc 保留输入内容', tagInput.value === beforeVal, JSON.stringify(tagInput.value));
+      c('Esc 被消费（不冒泡去关外层弹窗）', evEsc.defaultPrevented);
+      c('外层弹窗仍打开（Esc 没穿透）', !!d.getElementById('q-tags'));
+
+      // ---- Tab 关闭下拉 ----
+      await typeTag('重要');
+      await wait(250);
+      c('第三次输入下拉打开', !!suggestList(), combo());
+      const evTab = pressTag('Tab');
+      await wait(250);
+      c('Tab 关闭联想下拉', !suggestList() && combo() === 'false', combo());
+      c('Tab 保留输入内容', tagInput.value.trim() === '重要',
+        JSON.stringify(tagInput.value));
+      c('Tab 本身不被拦截（仍可移动焦点）', !evTab.defaultPrevented);
+
+      // ---- 无高亮时 Enter 仍按"新建标签" ----
+      tagInput.focus();
+      tagInput.value = '临时新标签';
+      tagInput.dispatchEvent(new Event('input', { bubbles: true }));
+      await wait(800);                 // 等防抖 500ms + 余量
+      pressTag('Escape');              // 关掉联想，确保没有高亮
+      await wait(250);
+      const draftBefore = readDraftTags().slice();
+      pressTag('Enter');
+      await wait(200);
+      /* 这里**不**断言"输入框被清空"：无头 + 虚拟时间下 Vue 的 DOM 回写
+         不完全可靠（响应式值确实清空了 —— 草稿里 tags 已写入，但 DOM 的
+         value 没跟着回写）。断言 DOM 反而变成测环境，所以只断言
+         aria-activedescendant 已复位这个真实 DOM 属性。 */
+      c('新建后清除 aria-activedescendant',
+        !tagInput.getAttribute('aria-activedescendant'),
+        String(tagInput.getAttribute('aria-activedescendant')));
+      await wait(800);                 // 等防抖写入草稿
+      const draftAfter = readDraftTags();
+      c('诊断 新建标签前状态', true,
+        'expanded=' + combo() + ' activeIdx=' + activeIdx()
+        + ' 草稿tags(前)=' + JSON.stringify(draftBefore));
+      c('无高亮时 Enter 直接新建标签（原行为保留）',
+        draftAfter.indexOf('临时新标签') !== -1,
+        JSON.stringify(draftBefore) + ' -> ' + JSON.stringify(draftAfter));
+    }
+    // 关掉弹窗，避免影响后续
+    d.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await wait(400);
+  }
+
+  /* ============ 13. 题目数超阈值的分页提示 ============
      在 Python 侧做第二遍（见 main()）：塞够 500+ 题后重新加载页面，
      用 ?bulk=1 让本探针只验警告。 */
 
@@ -415,6 +567,8 @@ def seed() -> int:
     leaf = json.loads(body)["id"]
 
     made = 0
+    # 标签名刻意都带 "重要" 前缀：标签联想的键盘用例需要一个**多于 2 项**的
+    # 候选列表，否则"移到第 2 项""边界循环"都退化成同一项、等于没测。
     for i, stem in enumerate([
         "求极限 lim(x→0) sin(x)/x",
         "洛必达法则的适用条件是什么",
@@ -422,7 +576,8 @@ def seed() -> int:
     ]):
         _status, _body = call("POST", "/questions", {
             "folder_id": leaf, "stem": stem,
-            "answer": f"答案 {i + 1}", "tags": ["重要极限"],
+            "answer": f"答案 {i + 1}",
+            "tags": ["重要极限", "重要公式", "重要定义"][: i + 1],
             "is_starred": i == 0, "sort_order": i,
         })
         made += 1

@@ -947,16 +947,33 @@
                           @click="questionForm.tags.splice(i, 1); onQuestionEdit()">×</button>
                 </span>
               </transition-group>
+              <!--
+                组合框语义：输入框是 combobox，联想列表是 listbox，
+                键盘高亮用 aria-activedescendant 指向某一项 ——
+                这样高亮不会把焦点从输入框移走，用户能继续打字。
+              -->
               <input class="tag-input__field" id="q-tags" type="text"
                      v-model="tagDraft" placeholder="输入后回车"
-                     @keydown.enter.prevent="addTag"
+                     role="combobox" aria-autocomplete="list"
+                     aria-controls="tag-suggest-list"
+                     :aria-expanded="tagSuggestOpen ? 'true' : 'false'"
+                     :aria-activedescendant="tagHighlight >= 0
+                       ? 'tag-opt-' + tagHighlight : null"
+                     @keydown="onTagKeydown"
                      @input="onTagSuggest">
             </div>
-            <ul v-if="tagSuggestions.length" class="tag-suggest">
-              <li v-for="t in tagSuggestions" :key="t.id">
-                <button class="tag-suggest__item" type="button" @click="pickTag(t.name)">
-                  {{ t.name }}<span class="text-faint num">{{ t.question_count }}</span>
-                </button>
+            <ul v-if="tagSuggestOpen && tagSuggestions.length" id="tag-suggest-list"
+                class="tag-suggest" role="listbox" aria-label="标签联想">
+              <li v-for="(t, i) in tagSuggestions" :key="t.id"
+                  :id="'tag-opt-' + i" role="option"
+                  :data-tag-name="t.name"
+                  :aria-selected="tagHighlight === i ? 'true' : 'false'"
+                  class="tag-suggest__item"
+                  :class="{ 'is-active': tagHighlight === i }"
+                  @mouseenter="hoverTagSuggest(i)"
+                  @mouseleave="hoverTagSuggest(-1)"
+                  @click="pickTag(t.name)">
+                {{ t.name }}<span class="text-faint num">{{ t.question_count }}</span>
               </li>
             </ul>
           </div>

@@ -1952,9 +1952,14 @@ pre,
   color: var(--c-text);
   font-size: var(--fs-body);
   text-align: left;
+  /* 现在是 <li role="option">，不再是 button，指针样式要显式给 */
+  cursor: pointer;
 }
 
 .tag-suggest__item:hover { background: var(--c-hover-bg); }
+
+/* 键盘高亮：放在 :hover 之后，保证两边同时命中时以键盘为准（同一底色） */
+.tag-suggest__item.is-active { background: var(--c-primary-soft); }
 
 .tag-picker {
   display: flex;
