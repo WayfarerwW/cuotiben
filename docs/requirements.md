@@ -63,6 +63,14 @@
 - 前端树形展示，可展开收起
 - 提供预置大学数学知识点，首次可一键导入
 
+删除时的 force 参数（`DELETE /folders/{id}?force=false|true`）：
+- 若该文件夹**或其子文件夹**下仍有未软删除的题目，默认（`force=false`）**拒绝删除**
+  并返回 409，提示先处理这些题目。
+- 目的：避免静默级联软删导致题目变成"挂在已删除文件夹上的孤儿"——
+  界面上题目消失了，数据却还在，难以排查。
+- `force=true` 表示确认要删：**只软删除文件夹本身（学科会连带其下大类），
+  题目保持原状不动**（既不删除也不改所属）。
+
 ### 2.3 题目管理
 
 字段：folder_id、stem（可空）、answer（可空）、is_starred、mastery_status、图片、标签
@@ -194,8 +202,18 @@ text
 - 逾期题按"重点优先 + 逾期最久"排序
 - 界面显示"今日到期 X 题，补卡 Y 题（上限 N）"
 - **一键重置积压**：逾期 ≥14 天的题，interval_index 归零
-  - 方式一：全部重置到第一阶段
-  - 方式二：分散重置到未来 N 天
+  - 方式一（`spread=false`，默认）：全部重置到第一阶段，
+    `next_review_at = now() + 3 天`
+  - 方式二（`spread=true`）：分散重置到未来 N 天（N 取
+    `settings.backfill_reset_days`，默认 14，也可由请求显式指定 `days`），
+    避免积压题在同一天全部涌入今日队列
+- **分散模式允许阶段与到期日不一致**：方式二下 `interval_index` 同样归零，
+  但 `next_review_at` 被错开到 `[now+3天, now+3天+N]` 区间内。
+  即某题可能"阶段为 0"却到期日在 6 天后 —— 这是**有意为之**：
+  重置的目的是把积压摊平到未来若干天，而不是让它们立刻全部到期。
+  界面展示到期日时以 `next_review_at` 为准，不要用 `interval_index` 反推。
+- 重置是**修改当前生效的复习记录**（重新排期），不是新增一条打勾记录 ——
+  用户并没有复习这道题。该记录会标记为补卡，计入"今日补卡数量"。
 - 补卡统计：今日补卡数量、连续补卡天数
 
 ### 2.13 重点标记
@@ -319,8 +337,15 @@ interval_index	INTEGER	0~3
 last_review_at	DATETIME	上次复习
 next_review_at	DATETIME	下次复习
 mastery_level	INTEGER	0/1/2/3
+is_backfill	BOOLEAN	本次是否补卡，默认 false
 created_at	DATETIME	创建
 deleted_at	DATETIME	撤销用
+
+`is_backfill` 说明：打勾时若该题当前记录已逾期（`next_review_at` 早于本地今日 0 点）
+即为 true；一键重置积压产生的记录同样为 true。它支撑 2.12 的
+"今日补卡数量 / 连续补卡天数"统计 —— 若不落库而靠回看上一条记录反推，
+记录被撤销（软删除）后就会算错。
+
 3.7 notes
 字段	类型	说明
 id	INTEGER PK	主键
@@ -355,16 +380,51 @@ tags.name 入库前归一化
 
 4. 接口清单
 4.1 文件夹
+
 方法	路径	说明
 POST	/folders	创建
 GET	/folders/tree	完整树
+
+`GET /folders/tree` 响应字段：
+`id`、`name`、`parent_id`、`level`、`sort_order`、`created_at`、`deleted_at`、
+`children`、`question_count`
+
+- 顶层是学科（`level=1`、`parent_id` 为 null），`children` 是大类（`level=2`）。
+- `question_count` 为只读计算字段，只统计未软删除题目；
+  学科节点上汇总其下所有大类，便于折叠状态下显示总量。
+- 只返回 `deleted_at` 为 null 的文件夹。
+
+方法	路径	说明
 PUT	/folders/{id}	重命名
-DELETE	/folders/{id}	软删除
+DELETE	/folders/{id}	软删除（支持 `?force=true`，见 2.2）
+
 4.2 题目
+
 方法	路径	说明
 POST	/questions	创建
 GET	/questions	支持 folder_id / tag / keyword / starred / mastery / tag_mode
+
+`GET /questions` 列表项响应字段：
+`id`、`folder_id`、`folder_name`、`stem`、`answer`、`is_starred`、
+`mastery_status`、`sort_order`、`created_at`、`updated_at`、`images`、`tags`、
+`next_review_at`
+
+方法	路径	说明
 GET	/questions/{id}	详情
+
+`GET /questions/{id}` 详情响应字段：
+`id`、`folder_id`、`folder_name`、`stem`、`answer`、`is_starred`、
+`mastery_status`、`sort_order`、`created_at`、`updated_at`、`deleted_at`、
+`images`、`tags`、`next_review_at`、`interval_index`、`review_count`
+
+- `images` 是对象数组（`question_images` 记录），不是 URL 字符串数组。
+- `next_review_at` / `interval_index` / `review_count` 取自该题"当前生效"的
+  review_record（未软删除里最新一条），由服务端推导，不直接存在 questions 表。
+- `folder_name` 便于列表直接显示所属大类，避免前端再查一次文件夹。
+- 列表项不返回 `deleted_at`（列表只含未删除题目，该字段无意义）；
+  详情返回它以便排查。
+
+方法	路径	说明
 PUT	/questions/{id}	编辑
 DELETE	/questions/{id}	软删除
 POST	/questions/{id}/star	标重点
@@ -404,9 +464,19 @@ POST	/questions/{id}/mastery	切换正误
 `/review/{id}` 的 `{id}` 存在语义歧义（是题目 id 还是 review_record id），
 实现 4.5 时需明确为题目 id 并改名为 `{question_id}`，避免前端误传。
 4.3 标签
+
 方法	路径	说明
 GET	/tags	全部
+
+`GET /tags` 响应字段：
+`id`、`name`、`created_at`、`question_count`
+
+方法	路径	说明
 GET	/tags/search?q=	联想
+
+`GET /tags/search?q=` 响应字段：
+`id`、`name`、`created_at`、`question_count`（与 `GET /tags` 同结构
+`TagWithCount`），额外支持 `limit` 参数（默认 20，范围 1~100）。
 
 返回结构：
 
@@ -417,8 +487,6 @@ GET /tags -> [
 ]
 ```
 
-`GET /tags/search?q=` 返回同样的结构（`TagWithCount`），
-额外支持 `limit` 参数（默认 20，范围 1~100）。
 
 排序规则：
 - `question_count` 降序 —— 高频标签靠前
@@ -437,13 +505,48 @@ GET /tags -> [
 POST	/upload/image	上传压缩
 DELETE	/upload/image/{id}	删除
 4.5 复习
+
 方法	路径	说明
 GET	/review/today	今日队列
+
+`GET /review/today` 响应字段（数组，每项）：
+`question_id`、`stem`、`answer`、`images`、`tags`、`folder_name`、
+`is_starred`、`mastery_status`、`folder_id`、`interval_index`、`next_review_at`、
+`overdue_days`、`is_backlog`、`is_overdue`
+
+- `overdue_days`：逾期天数（未逾期为 0），用于标灰与角标配色。
+- `is_backlog`：逾期 ≥14 天，界面折叠到"积压区"。
+- `is_overdue`：`overdue_days > 0` 的便捷布尔值。
+- `mastery_status`、`folder_id` 供面板内复习视图直接显示正误状态与所属文件夹。
+
+方法	路径	说明
 GET	/review/count	数量
+
+`GET /review/count` 响应字段：`count`（与 `/review/today` 同口径）。
+
+方法	路径	说明
 POST	/review/{id}/check	打勾（随时可打）
+
+`POST /review/{id}/check` 请求体（可选）：
+`{ "mastery": 0 | 1 | 2 | 3 }`，省略则按 0 处理。
+- `{id}` 是**题目 id**（不是 review_record id）—— 打勾操作的是题目，
+  复习记录是打勾产生的结果。实现中参数名为 `{question_id}` 以示明确。
+- 不传 body 或传空对象 `{}` 均可。该接口不校验待复习状态、允许重复打勾，
+  **不返回 409**（见 2.11）。
+- `mastery` 当前只写进记录的 `mastery_level` 供统计；阶段推进口径见 5.1/5.2。
+
+方法	路径	说明
 POST	/review/{id}/uncheck	撤销
 POST	/review/backfill/reset	重置积压
 GET	/review/backfill/stats	补卡统计
+
+`GET /review/backfill/stats` 响应字段：
+`today_backfill_count`、`consecutive_days`、`backlog_count`
+
+- `today_backfill_count`：今日补卡数量（今天打勾且当时已逾期，或今日被重置积压）。
+- `consecutive_days`：连续补卡天数；今天尚未补卡时从昨天起算。
+- `backlog_count`：当前仍处于积压区（逾期 ≥14 天）的题目数。
+
 4.6 记事本
 方法	路径	说明
 POST	/notes	新建
@@ -459,6 +562,22 @@ POST	/export/pdf	PDF 导出
 方法	路径	说明
 GET	/settings	获取
 PUT	/settings	更新
+
+4.9 健康检查
+方法	路径	说明
+GET	/health	服务状态与数据库位置
+
+返回结构：
+
+```
+GET /health -> { "status": "ok", "db_path": "...", "db_exists": true }
+```
+
+- `db_path` 是**当前实际使用的数据库文件绝对路径**，由连接串解析得出，
+  不是写死的默认路径 —— 用 `CUOTIBEN_DATABASE_URL` 覆盖连接串时也能报出真实位置。
+- 用途：启动自检、确认数据落在哪个文件，以及数据说明页（2.17）显示路径。
+- 该接口不涉及业务数据，无需鉴权（本项目本身也无鉴权）。
+
 5. 关键逻辑
 5.1 记忆曲线
 text

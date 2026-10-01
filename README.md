@@ -114,7 +114,7 @@ python tools/verify_review_service.py  # 复习：首条记录、打勾重置、
 python tools/verify_tags.py            # 标签：归一化、复用、联想、多标签 AND/OR、计数
 python tools/verify_font.py            # 中文 PDF 渲染与字体嵌入
 python tools/verify_heic.py            # HEIC 读写与图片压缩管线
-python tools/audit_routes.py           # 接口命名一致性审计（对照需求第 4 节与代码实际路由）
+python tools/audit_routes.py           # 接口审计：命名一致性 + 文档与实现的字段级差异
 ```
 
 `tools/curl_*.ps1` 会真实启动 uvicorn 并用 curl 打一遍接口
