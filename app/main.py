@@ -6,6 +6,9 @@
 
 注意：建表依赖 app.models 已被导入（init_db 内部会 import），
 否则 Base.metadata 里没有表定义，create_all 会静默什么都不建。
+
+按 AGENTS.md 3.4，业务逻辑在 services/；本模块只做调度与挂载：
+settings 默认值的写入逻辑已迁到 services/settings_service.py。
 """
 
 from __future__ import annotations
@@ -16,30 +19,10 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
 from sqlalchemy.engine import make_url
-from sqlalchemy.orm import Session
 
 from .database import SessionLocal, database_url, engine, init_db
-from .models import DEFAULT_SETTINGS, Setting
-
-
-def seed_default_settings(db: Session) -> list[str]:
-    """写入缺失的 settings 默认值，返回本次实际新增的 key 列表。
-
-    幂等：已存在的 key 一律不覆盖，避免把用户改过的配置重置回默认值。
-    默认值定义见 app/models/settings.py（requirements.md 3.8）。
-    """
-    existing = set(db.scalars(select(Setting.key)).all())
-    created: list[str] = []
-    for key, value in DEFAULT_SETTINGS.items():
-        if key in existing:
-            continue
-        db.add(Setting(key=key, value=value))
-        created.append(key)
-    if created:
-        db.commit()
-    return created
+from .services.settings_service import ensure_default_settings
 
 
 @asynccontextmanager
@@ -50,7 +33,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 2. 初始化 settings 默认值（幂等，不覆盖用户配置）
     with SessionLocal() as db:
-        created = seed_default_settings(db)
+        created = ensure_default_settings(db)
     if created:
         print(f"[startup] 已写入默认配置: {', '.join(created)}")
     else:

@@ -53,6 +53,25 @@ def get_folder(db: Session, folder_id: int) -> Folder:
     return folder
 
 
+def get_category_for_question(db: Session, folder_id: int) -> Folder:
+    """校验 folder_id 可作为题目挂载点，返回该二级文件夹。
+
+    需求 2.2：题目**只挂在二级文件夹（大类）下**。挂到一级学科上属于结构性
+    错误，必须在写入前拦下来，否则会绕过两级约定。
+    """
+    folder = get_folder(db, folder_id)
+    if folder.level != LEVEL_CATEGORY:
+        raise InvalidFolderStructureError(
+            f"题目只能挂在大类（二级文件夹）下，「{folder.name}」是学科"
+        )
+    if folder.parent_id is None:
+        # 数据被手工改坏时的兜底：level=2 必须有父
+        raise InvalidFolderStructureError(
+            f"文件夹「{folder.name}」层级数据异常（level=2 但无父节点）"
+        )
+    return folder
+
+
 def _question_counts(db: Session) -> dict[int, int]:
     """各文件夹下未删除题目的数量。"""
     rows = db.execute(

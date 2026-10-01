@@ -41,8 +41,11 @@ class ReviewRecord(PKMixin, CreatedAtMixin, SoftDeleteMixin, Base):
     # 该题累计已复习次数（打勾时递增）
     review_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     interval_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    last_review_at: Mapped[datetime | None] = utc_datetime_column()
-    next_review_at: Mapped[datetime | None] = utc_datetime_column()
+    # 两者都可空：首条记录是"排定首次复习"，此时还没复习过，last_review_at 为 NULL。
+    last_review_at: Mapped[datetime | None] = utc_datetime_column(nullable=True)
+    # next_review_at 允许为空是为了容忍数据被外部改坏的情况；
+    # 正常流程（创建题目、打勾）都会写入具体时间。
+    next_review_at: Mapped[datetime | None] = utc_datetime_column(nullable=True)
     # mastery_level: 0/1/2/3，见 requirements.md 5.1 推进规则
     mastery_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 

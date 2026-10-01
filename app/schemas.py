@@ -117,6 +117,8 @@ class QuestionCreate(BaseModel):
     sort_order: int = 0
     # 标签名列表；服务端负责归一化 + 复用或新建（requirements.md 5.4）
     tags: list[str] = Field(default_factory=list)
+    # 图片 URL 数组（上传接口尚未实现，先接受路径/URL；取不到元数据则留空）
+    images: list[str] = Field(default_factory=list)
 
 
 class QuestionUpdate(BaseModel):
@@ -128,6 +130,8 @@ class QuestionUpdate(BaseModel):
     sort_order: int | None = None
     # 传了就整体替换该题标签；不传表示不改
     tags: list[str] | None = None
+    # 同理，传了就整体替换图片列表
+    images: list[str] | None = None
 
 
 class TagOut(OrmBase):
@@ -137,10 +141,11 @@ class TagOut(OrmBase):
 
 
 class QuestionOut(OrmBase):
-    """题目详情。"""
+    """题目详情（GET /question/{id}）。含图片列表与标签列表。"""
 
     id: int
     folder_id: int
+    folder_name: str | None = None
     stem: str | None
     answer: str | None
     is_starred: bool
@@ -151,45 +156,52 @@ class QuestionOut(OrmBase):
     deleted_at: datetime | None
     images: list[QuestionImageOut] = Field(default_factory=list)
     tags: list[TagOut] = Field(default_factory=list)
-    # 复习状态（由当前生效的 review_record 推导，可能还没有记录）
+    # 复习状态（由当前生效的 review_record 推导）
     next_review_at: datetime | None = None
     interval_index: int | None = None
     review_count: int | None = None
 
 
 class QuestionListItem(OrmBase):
-    """GET /questions 列表项：只带列表必需的字段，避免拼装大对象。"""
+    """GET /questions 列表项。
+
+    按约定必须含：id、stem、answer、is_starred、mastery_status、tags、folder_name。
+    images 一并返回，列表页要显示缩略图。
+    """
 
     id: int
     folder_id: int
+    folder_name: str | None = None
     stem: str | None
+    answer: str | None
     is_starred: bool
     mastery_status: MasteryStatus
     sort_order: int
     created_at: datetime
     updated_at: datetime
-    # 列表页要显示缩略图与标签
     images: list[QuestionImageOut] = Field(default_factory=list)
     tags: list[TagOut] = Field(default_factory=list)
-    folder_name: str | None = None
     next_review_at: datetime | None = None
 
 
 class MasteryUpdate(BaseModel):
-    """POST /questions/{id}/mastery —— 切换正误状态。"""
+    """POST /questions/{id}/mastery —— 切换正误状态。
 
-    mastery_status: MasteryStatus
+    mastery_status 省略时表示在 still_wrong / mastered 之间翻转。
+    """
+
+    mastery_status: MasteryStatus | None = None
 
 
 class QuestionFilters(BaseModel):
-    """GET /questions 的筛选条件（requirements.md 2.5 / 4.2）。
+    """GET /questions 的筛选条件（requirements.md 2.5 / 5.5）。
 
-    多标签默认 AND；tag_match='or' 时改为 OR。
+    多标签默认 AND（必须同时含全部标签）；tag_mode='or' 时改为 OR。
     """
 
     folder_id: int | None = None
     tag: list[str] = Field(default_factory=list)
-    tag_match: Literal["and", "or"] = "and"
+    tag_mode: Literal["and", "or"] = "and"
     keyword: str | None = None
     starred: bool | None = None
     mastery: MasteryStatus | None = None

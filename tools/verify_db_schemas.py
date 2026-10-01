@@ -96,7 +96,7 @@ def main() -> int:
             check("init_db 幂等（可重复调用）", False, str(e)[:80])
 
         # ---------- 4. settings 默认值初始化 ----------
-        from app.main import seed_default_settings
+        from app.services.settings_service import ensure_default_settings
         from app.models import (
             DEFAULT_BACKFILL_LIMIT,
             DEFAULT_BACKFILL_RESET_DAYS,
@@ -106,7 +106,7 @@ def main() -> int:
         from sqlalchemy import select
 
         with SessionLocal() as db:
-            created = seed_default_settings(db)
+            created = ensure_default_settings(db)
         check("首次启动写入 3 个默认配置", len(created) == 3, f"新增: {created}")
 
         with SessionLocal() as db:
@@ -119,7 +119,7 @@ def main() -> int:
 
         # 幂等：再跑一次不应新增
         with SessionLocal() as db:
-            created2 = seed_default_settings(db)
+            created2 = ensure_default_settings(db)
         check("重复初始化不新增、不覆盖", created2 == [], f"新增: {created2}")
 
         # 用户改过的值不能被重置
@@ -128,7 +128,7 @@ def main() -> int:
             row.value = "5"
             db.commit()
         with SessionLocal() as db:
-            seed_default_settings(db)
+            ensure_default_settings(db)
         with SessionLocal() as db:
             row = db.scalars(select(Setting).where(Setting.key == "backfill_limit")).one()
             kept = row.value
