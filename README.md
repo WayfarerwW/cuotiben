@@ -111,6 +111,7 @@ python tools/verify_folders_service.py # folders 业务逻辑（两级结构、�
 python tools/verify_questions_service.py # questions 业务逻辑（标签归一化、筛选、首条复习记录）
 python tools/verify_font.py            # 中文 PDF 渲染与字体嵌入
 python tools/verify_heic.py            # HEIC 读写与图片压缩管线
+python tools/audit_routes.py           # 接口命名一致性审计（对照需求第 4 节与代码实际路由）
 ```
 
 `tools/curl_*.ps1` 会真实启动 uvicorn 并用 curl 打一遍接口

@@ -363,13 +363,39 @@ DELETE	/folders/{id}	软删除
 4.2 题目
 方法	路径	说明
 POST	/questions	创建
-GET	/questions	支持 folder_id / tag / keyword / starred / mastery
-GET	/question/{id}	详情
+GET	/questions	支持 folder_id / tag / keyword / starred / mastery / tag_mode
+GET	/questions/{id}	详情
 PUT	/questions/{id}	编辑
 DELETE	/questions/{id}	软删除
 POST	/questions/{id}/star	标重点
 POST	/questions/{id}/unstar	取消
 POST	/questions/{id}/mastery	切换正误
+
+约定：
+- 路径资源名一律用复数（questions / folders / tags / notes）。
+  历史上 4.2 的详情接口写作 /question/{id}，已统一为 /questions/{id}。
+- 带参路径在文档里统一写作 `{id}`，只是表示"该资源的 id"；
+  代码实现里按资源命名具体化为 `{folder_id}`、`{question_id}` 等，
+  生成的 OpenAPI 参数名更清晰。两者 URL 相同，不构成不一致。
+- `keyword` 只匹配题干与答案，**不匹配标签**；按标签检索请用 `tag`。
+  职责分离：标签检索归 `tag`，文本检索归 `keyword`。
+  前端搜索框为单输入框，输入关键词时**同时请求 `?keyword=` 与 `?tag=`，
+  再将两组结果合并去重**（后端不做隐式跨字段匹配）。
+- `tag` 可重复传多个；`tag_mode=and`（默认）表示必须同时含全部标签，
+  `tag_mode=or` 表示含任一即可。
+- `mastery` 状态接口支持两种模式：
+  - **不传 body**：在 `still_wrong` / `mastered` 之间翻转
+  - **传 body**（`{"mastery_status": "mastered"}`）：直接设置为该值
+  这样前端"切换按钮"与"明确设置"两种交互都能用同一接口。
+
+命名审计（2026-10 全量核对第 4 节）另有两点**记录在案但暂不改动**，
+因为属于动作/功能命名空间而非资源集合，改动收益低于影响面：
+- `/review/today`、`/review/{id}/check` 等：`review` 是功能命名空间
+- `/upload/image`、`/export/pdf`：`upload` / `export` 是动作命名空间
+- `/settings`：单复数同形，无需处理
+
+`/review/{id}` 的 `{id}` 存在语义歧义（是题目 id 还是 review_record id），
+实现 4.5 时需明确为题目 id 并改名为 `{question_id}`，避免前端误传。
 4.3 标签
 方法	路径	说明
 GET	/tags	全部

@@ -218,12 +218,15 @@ try {
     # ---------- 详情 ----------
     Write-Host ""
     Write-Host "=== 详情 / 编辑 ===" -ForegroundColor Yellow
-    $r = Invoke-Curl @("$base/question/$($q1.id)")
-    Show "19. GET /question/{id}（详情）" $r '200'
+    $r = Invoke-Curl @("$base/questions/$($q1.id)")
+    Show "19. GET /questions/{id}（详情）" $r '200'
     $detail = Json $r.body
     Assert "详情含 tags 与 images" ((@($detail.tags).Count -eq 3) -and (@($detail.images).Count -eq 1)) `
         "tags=$(@($detail.tags.name) -join ',') images=$(@($detail.images).Count)"
-    Show "20. GET 不存在的题目 -> 404" (Invoke-Curl @("$base/question/99999")) '404'
+    # 单复数已统一为复数：旧的单数路径必须不再存在，避免前端误用旧地址
+    $legacy = Invoke-Curl @("$base/question/$($q1.id)")
+    Assert "旧单数路径 /question/{id} 已不存在（404）" ($legacy.code -eq '404') "HTTP $($legacy.code)"
+    Show "20. GET 不存在的题目 -> 404" (Invoke-Curl @("$base/questions/99999")) '404'
 
     $r = Invoke-Json 'PUT' "$base/questions/$($q1.id)" '{"stem":"改过的题干","tags":["新标签"]}'
     Show "21. PUT /questions/{id} 编辑" $r '200'
@@ -262,7 +265,7 @@ try {
     $after = Json (Invoke-Curl @("$base/questions")).body
     Assert "删除后剩 4 条" (@($after).Count -eq 4) "count=$(@($after).Count)"
     Assert "被删题目不在列表中" (@($after.id) -notcontains $q3.id) "ids=$(@($after.id) -join ',')"
-    Show "30. 删除后再取详情 -> 404" (Invoke-Curl @("$base/question/$($q3.id)")) '404'
+    Show "30. 删除后再取详情 -> 404" (Invoke-Curl @("$base/questions/$($q3.id)")) '404'
     Show "31. 重复删除 -> 404" (Invoke-Curl @('-X', 'DELETE', "$base/questions/$($q3.id)")) '404'
 
 } finally {

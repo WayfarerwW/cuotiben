@@ -101,7 +101,7 @@ def list_questions(
     return questions
 
 
-@router.get("/question/{question_id}", response_model=QuestionOut, summary="题目详情")
+@router.get("/questions/{question_id}", response_model=QuestionOut, summary="题目详情")
 def get_question(question_id: int, db: Session = Depends(get_db)) -> Question:
     with _service_errors():
         question = question_service.get_question(db, question_id)

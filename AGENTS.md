@@ -66,6 +66,9 @@
 - 业务异常在 service 层抛出（如 `FolderNotFoundError`、
   `DuplicateFolderNameError`），由 router 转成对应 HTTP 状态码；
   service 不直接抛 `HTTPException`，保持与 Web 框架解耦。
+- **状态类接口统一支持两种模式**：不传 body 为翻转，传 body 为直接设置。
+  适用于 mastery 等二元状态切换接口，让前端"切换按钮"与"明确设置"
+  两种交互复用同一接口，避免为同一资源开两个路由。
 
 ## 四、关键规则（易错点，务必遵守）
 
