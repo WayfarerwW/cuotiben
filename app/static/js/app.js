@@ -390,9 +390,35 @@
         });
       }
 
+      /**
+       * 题目列表分页迁移阈值（AGENTS.md 3.2）。
+       *
+       * 当前是**客户端过滤**：把全量题目拉到前端再筛。
+       * 到 500 题这个规模还能接受，再多就该改成后端分页查询了。
+       * 这里只做计数监控 —— 超阈值时在控制台警告，提醒该迁移了；
+       * 不自动改变行为（自动切模式会让"筛选结果不对"这类问题很难归因）。
+       */
+      var PAGINATION_HINT_THRESHOLD = 500;
+      /** 同一会话里只警告一次，避免每次刷新都刷屏。 */
+      var paginationWarned = false;
+
+      function checkPaginationThreshold(count) {
+        if (count <= PAGINATION_HINT_THRESHOLD || paginationWarned) { return; }
+        paginationWarned = true;
+        console.warn(
+          '[错题本] 题目数已达 ' + count + ' 题，超过客户端过滤阈值 '
+          + PAGINATION_HINT_THRESHOLD + '。\n'
+          + '当前实现把全量题目拉到前端过滤（见 AGENTS.md 3.2），'
+          + '题目继续增长会影响加载与筛选性能。\n'
+          + '迁移方式：题目列表改为后端分页查询（GET /questions 增加 '
+          + 'page/page_size），前端只请求当前页，不再全量拉取。'
+        );
+      }
+
       function loadQuestions() {
         return API.getQuestions().then(function (list) {
           questions.value = list || [];
+          checkPaginationThreshold(questions.value.length);
           recomputeStats();
         });
       }
@@ -534,6 +560,7 @@
             if (!seen[q.id]) { seen[q.id] = true; merged.push(q); }
           });
           questions.value = merged;
+          checkPaginationThreshold(questions.value.length);
           recomputeStats();
         }).catch(toastError);
       }

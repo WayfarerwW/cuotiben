@@ -57,10 +57,28 @@ function blob(el) {
   return (el.tagName || '?') + '.' + (typeof el.className === 'string' ? el.className : '');
 }
 (async () => {
+  /* 先接管 iframe 窗口的 console.warn：要在导航前设置好，
+     否则会漏掉挂载阶段发出的警告。 */
+  const bulkWarns = [];
   const f = document.createElement('iframe');
   f.style.cssText = 'border:0;height:900px;width:1400px';
   document.body.appendChild(f);
-  f.src = '__BASE__/?t=' + Date.now();
+  const hook = () => {
+    try {
+      const cw = f.contentWindow;
+      if (!cw || cw.__warnHooked) return;
+      const orig = cw.console.warn;
+      cw.console.warn = function () {
+        bulkWarns.push(Array.from(arguments).join(' '));
+        return orig.apply(cw.console, arguments);
+      };
+      cw.__warnHooked = true;
+    } catch (e) {}
+  };
+  f.addEventListener('load', hook);
+  const bulk = /[?&]bulk=1/.test(location.search);
+  f.src = '__BASE__/?t=' + Date.now() + (bulk ? '&bulk=1' : '');
+  hook();
   const d = await until(() => {
     const doc = f.contentDocument;
     if (!doc) return null;
@@ -75,6 +93,24 @@ function blob(el) {
   }
   const w = f.contentWindow;
   await wait(1800);
+
+  /* bulk 模式只验"超过 500 题的分页警告"就收尾：
+     警告是 loadQuestions() 在挂载时发出的，塞完题重新加载一次页面即可，
+     没必要把整套用例再跑一遍（既慢又会互相干扰）。 */
+  if (bulk) {
+    const joined = bulkWarns.join(' ');
+    c('超过 500 题时控制台给出分页迁移警告',
+      /客户端过滤阈值/.test(joined), JSON.stringify(joined.slice(0, 70)));
+    c('分页警告只出现一次（不刷屏）',
+      bulkWarns.filter(x => /客户端过滤阈值/.test(x)).length === 1,
+      bulkWarns.length + ' 条 console.warn');
+    c('分页警告说明了迁移方向（后端分页）', /后端分页/.test(joined));
+    const pre0 = document.createElement('pre');
+    pre0.id = 'a11y-result';
+    pre0.textContent = JSON.stringify(results);
+    document.body.appendChild(pre0);
+    return;
+  }
 
   /* 让复习队列真的有内容。POST /questions 建的首条记录 next_review_at 是
      now()+3 天，**不在**今日队列里 —— 必须显式回拨到期时间，
@@ -332,6 +368,10 @@ function blob(el) {
     }
   }
 
+  /* ============ 12. 题目数超阈值的分页提示 ============
+     在 Python 侧做第二遍（见 main()）：塞够 500+ 题后重新加载页面，
+     用 ?bulk=1 让本探针只验警告。 */
+
   const pre = document.createElement('pre');
   pre.id = 'a11y-result';
   pre.textContent = JSON.stringify(results);
@@ -392,6 +432,69 @@ def seed() -> int:
     return made
 
 
+def add_bulk_questions(db_path: Path, leaf_name: str, count: int) -> int:
+    """直接往库里插题，用于验证"超过 500 题控制台警告"。
+
+    走 API 插 500 多次太慢，直接写库；只作用于传入的临时库。
+    """
+    import sqlite3
+
+    con = sqlite3.connect(str(db_path))
+    try:
+        cur = con.cursor()
+        row = cur.execute("SELECT id FROM folders WHERE name=?", (leaf_name,)).fetchone()
+        if not row:
+            return 0
+        leaf = row[0]
+        now = "2026-02-14T10:30:00+00:00"
+        cur.executemany(
+            "INSERT INTO questions (folder_id, stem, answer, is_starred, "
+            "mastery_status, sort_order, created_at, updated_at, deleted_at) "
+            "VALUES (?, ?, ?, 0, 'still_wrong', ?, ?, ?, NULL)",
+            [(leaf, f"批量题 {i}", "答案", i, now, now) for i in range(count)],
+        )
+        con.commit()
+        return count
+    finally:
+        con.close()
+
+
+def run_probe(harness: Path, extra_query: str = "") -> tuple[int, list[dict]]:
+    """跑一次浏览器探针，返回 (退出码, 断言列表)。"""
+    url = BASE + "/__harness" + extra_query
+    dom = subprocess.run(
+        [EDGE, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-sandbox",
+         "--force-device-scale-factor=1", "--window-size=1500,1000",
+         "--virtual-time-budget=90000", "--dump-dom", url],
+        capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=300).stdout or ""
+
+    # 测试页里可能有**多个** <pre id="a11y-result">（异常路径也插一个空的），
+    # 所以要取最后一个非空的，不能用 re.search 拿第一个。
+    raws = re.findall(r'<pre id="a11y-result">(.*?)</pre>', dom, re.S)
+    for candidate in reversed(raws):
+        text = (candidate.replace("&quot;", '"').replace("&amp;", "&")
+                .replace("&lt;", "<").replace("&gt;", ">")).strip()
+        if text.startswith("["):
+            return 0, json.loads(text)
+    print(f"未取到断言结果（找到 {len(raws)} 个结果节点）；DOM 尾部：")
+    print(dom[-1200:])
+    return 2, []
+
+
+def report(rows: list[dict], title: str) -> int:
+    print(f"\n== {title} ==")
+    for r in rows:
+        print(f"[{'PASS' if r['ok'] else 'FAIL'}] {r['name']}"
+              + (f" — {r['detail']}" if r["detail"] else ""))
+    failed = [r for r in rows if not r["ok"]]
+    print("-" * 74)
+    print(f"合计 {len(rows)} 项，通过 {len(rows) - len(failed)}，失败 {len(failed)}")
+    for r in failed:
+        print(f"  FAILED: {r['name']} — {r['detail']}")
+    return 1 if failed else 0
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="a11y_"))
     harness = tmp / "a11y.html"
@@ -419,39 +522,27 @@ def main() -> int:
             return 2
 
         n = seed()
-        print(f"[seed] 已造 {n} 道题并回拨到期时间\n")
+        print(f"[seed] 已造 {n} 道题并回拨到期时间")
 
-        dom = subprocess.run(
-            [EDGE, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-sandbox",
-             "--force-device-scale-factor=1", "--window-size=1500,1000",
-             "--virtual-time-budget=90000", "--dump-dom", BASE + "/__harness"],
-            capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=300).stdout or ""
+        code1, rows1 = run_probe(harness)
+        if code1 != 0:
+            return code1
 
-        # 注意：测试页里可能有**多个** <pre id="a11y-result">（探针在异常路径下
-        # 也会插一个空的），所以要取最后一个非空的那个，不能用 re.search 拿第一个。
-        raws = re.findall(r'<pre id="a11y-result">(.*?)</pre>', dom, re.S)
-        raw = ""
-        for candidate in reversed(raws):
-            text = (candidate.replace("&quot;", '"').replace("&amp;", "&")
-                    .replace("&lt;", "<").replace("&gt;", ">")).strip()
-            if text.startswith("["):
-                raw = text
-                break
-        if not raw:
-            print(f"未取到断言结果（找到 {len(raws)} 个结果节点）；DOM 尾部：")
-            print(dom[-1200:])
-            return 2
-        rows = json.loads(raw)
-        for r in rows:
-            print(f"[{'PASS' if r['ok'] else 'FAIL'}] {r['name']}"
-                  + (f" — {r['detail']}" if r["detail"] else ""))
-        failed = [r for r in rows if not r["ok"]]
-        print("-" * 74)
-        print(f"合计 {len(rows)} 项，通过 {len(rows) - len(failed)}，失败 {len(failed)}")
-        for r in failed:
-            print(f"  FAILED: {r['name']} — {r['detail']}")
-        return 1 if failed else 0
+        # 第二遍：塞到 500 题以上，验证控制台的分页迁移警告。
+        # 放在最后跑，避免 500+ 行数据拖慢（或干扰）上面那些键盘/焦点断言。
+        added = add_bulk_questions(tmp / "a11y.db", "极限与连续", 600)
+        print(f"[bulk] 追加 {added} 道题，验证分页阈值警告")
+        code2, rows2 = run_probe(harness, "?bulk=1")
+        if code2 != 0:
+            return code2
+
+        rc1 = report(rows1, "键盘与焦点")
+        rc2 = report(rows2, "分页阈值监控")
+        total = len(rows1) + len(rows2)
+        failed = [r for r in rows1 + rows2 if not r["ok"]]
+        print("=" * 74)
+        print(f"总计 {total} 项，通过 {total - len(failed)}，失败 {len(failed)}")
+        return 1 if (rc1 or rc2) else 0
     finally:
         subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
                        capture_output=True)
