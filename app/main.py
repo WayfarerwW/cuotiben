@@ -64,6 +64,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if not sync_boot.get("started"):
         print(f"[sync] 未启动：{sync_boot.get('reason')}")
 
+    # 4. 每日备份兜底（requirements 2.17）。
+    #    默认关闭；CUOTIBEN_AUTO_BACKUP=1 时，若今天还没备份就补一次。
+    #    理由：个人本地应用没人愿意去配 cron，结果往往是
+    #    "备份脚本写了但从没跑过"。排期仍然推荐（应用不是每天都开）。
+    _maybe_auto_backup()
+
     yield
 
     stop_background_sync()
@@ -109,6 +115,30 @@ def health() -> dict:
         "db_path": str(db_path) if db_path else None,
         "db_exists": db_path.exists() if db_path else False,
     }
+
+
+def _maybe_auto_backup() -> None:
+    """启动时的每日备份兜底（requirements 2.17）。
+
+    用延迟 import + 兜底异常：backup.py 在项目根目录而不是 package 内，
+    且**备份失败绝不能拦住应用启动**。
+    """
+    import sys
+
+    root = str(PROJECT_ROOT)
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    try:
+        import backup
+
+        result = backup.maybe_run_daily_backup()
+    except Exception as exc:  # noqa: BLE001 - 备份问题不该影响启动
+        print(f"[backup] 启动兜底备份不可用：{type(exc).__name__}: {exc}")
+        return
+    if result and result.get("created"):
+        print(f"[backup] 已创建今日备份：{result['dest']}")
+        if result.get("pruned"):
+            print(f"[backup] 已清理 {len(result['pruned'])} 份过期备份")
 
 
 def register_routers(app: FastAPI) -> None:

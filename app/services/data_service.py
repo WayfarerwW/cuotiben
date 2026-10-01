@@ -163,8 +163,16 @@ def create_backup(*, now: dt.datetime | None = None) -> BackupResult:
     )
 
 
-def _sqlite_backup(source: Path, dest: Path) -> None:
-    """用 sqlite3 的 backup() 做一致性快照。"""
+def sqlite_snapshot(source: Path, dest: Path) -> None:
+    """用 sqlite3 的 backup() 做一致性快照。
+
+    为什么不用 shutil.copy2 直接拷 .db：有未提交事务或开了 WAL 时，
+    直接拷文件可能拿到不一致的快照。sqlite 自己的 backup API 会加锁、
+    按页复制，拿到的一定是一个完整可用的数据库。
+
+    放在 service 层是为了让 backup.py（每日备份脚本）复用同一份实现 ——
+    两边各写一遍迟早会有一边忘记处理 WAL。
+    """
     import sqlite3
 
     src = sqlite3.connect(str(source))
@@ -176,6 +184,10 @@ def _sqlite_backup(source: Path, dest: Path) -> None:
             dst.close()
     finally:
         src.close()
+
+
+#: 兼容旧名字（本模块内部与既有自检脚本用的是这个）
+_sqlite_backup = sqlite_snapshot
 
 
 # --------------------------------------------------------------------------

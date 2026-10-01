@@ -139,11 +139,59 @@ chmod +x start.sh
 ./start.sh
 ```
 
-启动后浏览器访问 <http://localhost:8000>。服务监听 `127.0.0.1`（纯本地单机），
-改代码会自动重启（uvicorn `reload=True`）。
+启动后浏览器访问 <http://localhost:8000>。
+
+`run.py` 的可选参数：
+
+| 参数 | 说明 |
+|---|---|
+| `--port 9000` | 换端口（默认 8000） |
+| `--host 0.0.0.0` | 允许局域网访问（默认 `127.0.0.1` 仅本机） |
+| `--dev` | 开发模式：改代码自动重启 |
+
+> 默认**不开** uvicorn 的热重载。它会让 uvicorn 监视整个项目目录，
+> 任何文件变动都重启进程 —— 包括 GitHub 自动同步自己产生的改动，
+> 那会把后台同步线程反复杀掉重启。改代码自动重启只在开发时有用，
+> 所以挪到了 `--dev`。
 
 > 想确认"启动后确实能打开、没有 404、Vue 正常挂载"，
 > 可运行 `python tools/verify_launch.py`（会用临时库真实启动一次并逐项检查）。
+
+### 4. 每日备份（建议配置）
+
+`backup.py` 把 `data/cuotiben.db` 复制成 `backups/cuotiben_{YYYY-MM-DD}.db`，
+并只保留最近 30 天：
+
+```bash
+python backup.py              # 备份今天 + 清理超过 30 天的
+python backup.py --keep 7     # 只保留最近 7 天
+python backup.py --list       # 列出已有备份和占用
+python backup.py --force      # 今天已备份过也重做
+python backup.py --dry-run    # 只显示会做什么
+```
+
+排期（三者选一）：
+
+```bash
+# Linux / macOS：crontab -e，每天 3 点
+0 3 * * *  cd /path/to/cuotiben && /usr/bin/python3 backup.py >> backups/backup.log 2>&1
+```
+
+```powershell
+# Windows：计划任务里每天运行
+schtasks /create /tn "cuotiben-backup" /sc daily /st 03:00 ^
+  /tr "python D:\path\to\cuotiben\backup.py"
+```
+
+```bash
+# 或者让应用自己兜底：.env 里设 CUOTIBEN_AUTO_BACKUP=1
+# 应用每次启动时补做当天这一次（同一天不会重复备）
+```
+
+> 两种情况都建议：**排期**保证每天都备，**启动兜底**保证不排期也不会
+> 一直没备份。备份用的是 SQLite 自己的 `backup()` API 做一致性快照，
+> 不直接拷 `.db` 文件（有未提交事务或开着 WAL 时，直接拷可能拿到
+> 不一致的快照）。
 
 ### 环境自检
 
@@ -167,6 +215,7 @@ python tools/verify_tags.py            # 标签：归一化、复用、联想、
 python tools/verify_notes.py           # 记事本：增删查改、软删除、标题/内容模糊搜索
 python tools/verify_settings.py        # 设置：默认值初始化、批量更新、校验、容错
 python tools/verify_data_service.py    # 数据说明页：路径解析、手动备份、导出 JSON
+python tools/verify_backup.py          # 每日备份脚本：文件名/保留策略/一致性快照/启动兜底
 python tools/verify_sync.py            # GitHub 自动同步：真推到临时 bare 仓库、token 不落盘
 python tools/verify_design_tokens.py   # 前端：style.css 与 UI 说明书的色彩/字体/间距/圆角/阴影/断点一致性
 python tools/verify_font.py            # 中文 PDF 渲染与字体嵌入
@@ -248,15 +297,31 @@ git 子进程的环境变量里，**不写入 `.git/config`**（把 token 拼进
 | [docs/poc-weasyprint.md](docs/poc-weasyprint.md) | PoC 结论：WeasyPrint 中文渲染、字体选型、HEIC 读写 |
 | [AGENTS.md](AGENTS.md) | 代码规范、关键规则（打勾逻辑、时区、命名等） |
 
-## 数据位置
+## 数据存储位置
 
-| 内容 | 路径 |
-|---|---|
-| 数据库 | `data/cuotiben.db` |
-| 图片 | `uploads/YYYY/MM/DD/{uuid}.jpg` |
-| 备份 | `backups/` |
-| 中文字体 | `fonts/NotoSansSC-VF.ttf`（Noto Sans SC，SIL OFL 1.1） |
-| 环境自检脚本 | `tools/` |
+所有数据都在**本机**，不上传任何服务器（唯一的例外是可选、默认关闭的
+GitHub 自动同步，且它**只同步代码文档，不含你的题库与图片**）。
+
+| 内容 | 路径 | 是否入库 |
+|---|---|---|
+| 数据库 | `data/cuotiben.db` | 否（`.gitignore` 忽略） |
+| 图片 | `uploads/YYYY/MM/DD/{uuid}.jpg` | 否 |
+| 每日备份 | `backups/cuotiben_{YYYY-MM-DD}.db`（保留 30 天） | 否 |
+| 手动备份 | `backups/{YYYYMMDD-HHMMSS}/`（数据库 + uploads 副本） | 否 |
+| 中文字体 | `fonts/NotoSansSC-VF.ttf`（Noto Sans SC，SIL OFL 1.1） | 是 |
+| 环境变量 | `.env`（由 `.env.example` 复制而来） | 否（**含密钥，绝不入库**） |
+| 环境自检脚本 | `tools/` | 是 |
+
+数据库、图片、备份三个目录被 `.gitignore` **刻意**忽略，只有 `.gitkeep`
+占位文件入库，所以 clone 下来目录结构是完整的。
+
+> 关于"每日备份"与"手动备份"的区别：前者是**单文件快照**，只含数据库，
+> 靠文件名日期保留最近 30 份，适合每天自动跑；后者是**一整个目录**，
+> 含数据库 + `uploads/` 图片，在数据说明页点「手动备份」触发，适合做
+> 迁移或重要改动前的存档。两者互不干扰，清理前者不会碰到后者。
+
+**迁移到另一台机器**：把 `data/`、`uploads/`、`backups/`（以及你的
+`.env`）一起复制过去即可。
 
 ## 使用方式（在本仓库上继续开发时）
 

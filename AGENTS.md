@@ -307,7 +307,8 @@ cuotiben/
 ├── backups/               # 备份
 ├── fonts/                 # 中文字体
 ├── requirements.txt
-├── run.py
+├── run.py                 # 启动入口（--dev 才开热重载）
+├── backup.py              # 每日备份：backups/cuotiben_{date}.db，保留 30 天
 ├── start.bat
 └── start.sh
 ```
@@ -386,12 +387,14 @@ cuotiben/
 
 ### 10.8 验证方式
 - [x] `tools/verify_responsive.py`（20 项）：三个断点 + Esc/焦点移入
-- [x] `tools/verify_a11y.py`（80 项，真浏览器）：锁背景滚动、Tab/Shift+Tab
+- [x] `tools/verify_a11y.py`（97 项，真浏览器）：锁背景滚动、Tab/Shift+Tab
       循环不逃逸、关闭后归还焦点（遮罩与 Esc 两条路径）、下拉 ↑/↓ + 循环 +
       Home/End、Enter 触发、Esc 关闭、点击外部关闭、用户菜单键盘、
       表格 `<caption>` 对读屏可见、打勾与笔记草稿的 aria-live 实际播报文本、
       标签联想键盘（↑/↓ 移动 + 边界循环、Enter 选中填入、Esc/Tab 关闭且保留
-      输入、无高亮时 Enter 仍新建）、超 500 题时的分页迁移警告
+      输入、无高亮时 Enter 仍新建）、数据说明页（路径与说明文案、
+      两个按钮**空闲态不带 disabled**、真点备份出结果、导出 JSON 不报错）、
+      超 500 题时的分页迁移警告
       （第二遍运行，塞够数据后重新加载页面捕获 console.warn）
 
 **第十节全部完成。** 唯一保留的说明：无头 + 虚拟时间下 Vue 的 DOM 回写

@@ -636,14 +636,21 @@ function blob(el) {
       c('备份提示不是错误样式',
         !!msg && !msg.classList.contains('data-message--error'));
 
-      /* 按 class 找按钮，不要按文案找：完成前后文案会变
-         （'手动备份' <-> '备份中…'），按文案找会在错误的时机返回 null。 */
-      const restored = d.querySelector('.quick-actions .btn--primary');
+      /* 等按钮**真正**恢复可点，而不是等提示文字出现 ——
+         doBackup 在 then 里还要 loadDataPaths() 走一次网络，
+         提示先渲染、按钮后解禁。第一版等提示就去查按钮，
+         正好抓到中间态、报了一次假失败（"disabled=true 文案=备份中…"）。
+         这里直接等我们要断言的那个属性。 */
+      const restored = await realWaitFor(() => {
+        const b = d.querySelector('.quick-actions .btn--primary');
+        return b && b.disabled === false && !b.hasAttribute('disabled') ? b : null;
+      }, 12);
       c('备份结束后按钮恢复可点（busy 态清除）',
-        !!restored && restored.disabled === false
-        && !restored.hasAttribute('disabled'),
-        restored ? ('disabled=' + restored.disabled
-          + ' 文案=' + restored.textContent.trim().slice(0, 12)) : 'null');
+        !!restored, restored ? ('文案=' + restored.textContent.trim().slice(0, 12))
+          : '仍是 busy 态');
+      c('恢复后文案回到「手动备份」',
+        !!restored && restored.textContent.trim() === '手动备份',
+        restored ? JSON.stringify(restored.textContent.trim()) : 'null');
       c('没有 Vue 渲染错误', vueErrors.length === 0,
         JSON.stringify(vueErrors.slice(0, 2)));
     }

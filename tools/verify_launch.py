@@ -74,7 +74,7 @@ def port_in_use(port: int) -> bool:
     """端口是否已被占用。
 
     必须提前检查：如果 8000 上已经有一个旧的服务在跑（比如上次调试留下的
-    uvicorn reload 工作进程），本脚本新起的服务会绑定失败，而断言却打在
+    进程），本脚本新起的服务会绑定失败，而断言却打在
     **那个旧服务**上 —— 会出现"绿色通过"但验证的其实不是本次代码的情况。
     调试时就被这个坑过很久（旧进程还注册着没有 /__harness 的旧应用）。
     """
@@ -111,8 +111,9 @@ def main() -> int:
                             encoding="utf-8")
     env["CUOTIBEN_TEST_HARNESS"] = str(harness_file)
 
-    # run.py 用 uvicorn(reload=True)，它会再起一个子进程。
     # 用 start_new_session 建独立进程组，结束时整组干掉，避免留下孤儿。
+    # 注：run.py 默认**不再**开 uvicorn reload（只有 --dev 才开），
+    # 所以正常情况下这里只有一个进程；但保留整组清理以防将来改动。
     creation = 0
     if hasattr(os, "CREATE_NEW_PROCESS_GROUP"):
         creation = subprocess.CREATE_NEW_PROCESS_GROUP
@@ -228,7 +229,7 @@ def main() -> int:
                   not data.get("errors"), "; ".join(data.get("errors") or []))
 
     finally:
-        # reload 模式下 uvicorn 会派生工作子进程，整组结束
+        # 整组结束（--dev 模式下 uvicorn 会派生工作子进程）
         try:
             if os.name == "nt":
                 subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
