@@ -522,6 +522,171 @@ def build_harness(target: str) -> str:
     )
 
 
+#: 第二阶段专用：验证"学科下新建大类"这个 UI 入口。
+#:
+#: 为什么必须有这一段：原来**整个前端没有创建大类的入口**
+#: （只有 promptNewSubject，不带 parent_id，只能建 level 1 学科）。
+#: 而题目只能挂二级大类（requirements 2.2 / 3.10），于是用户建完学科
+#: 就再也建不出大类、选不到所属大类、录不进任何题目 —— 录题流程整体断裂。
+#:
+#: 这类缺陷**后端接口测试永远发现不了**：POST /folders 一直支持 parent_id。
+#: 只有真的去点界面上的按钮才测得出来，所以断言必须落在 DOM 上。
+CATEGORY_PHASE = r"""
+<script>
+const RESULTS = [];
+function check(name, ok, detail) {
+  RESULTS.push({ name, ok: !!ok, detail: detail === undefined ? '' : String(detail) });
+}
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+(async () => {
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'width:1440px;height:1000px;border:0';
+  document.body.appendChild(iframe);
+
+  // 让页面处于"学科下没有大类"的状态：先删掉已有大类
+  const all = await fetch('/folders/tree').then((r) => r.json());
+  const subjects = all || [];
+  check('前置：存在至少一个学科', subjects.length >= 1, subjects.length);
+  for (const s of subjects) {
+    for (const c of (s.children || [])) {
+      await fetch('/folders/' + c.id + '?force=true', { method: 'DELETE' });
+    }
+  }
+
+  await new Promise((resolve) => {
+    let settled = false;
+    const done = () => { if (!settled) { settled = true; resolve(); } };
+    iframe.onload = done;
+    iframe.src = window.__TARGET__ + '?nopoll=1';
+    setTimeout(done, 15000);
+  });
+  await wait(2500);
+  const doc = iframe.contentDocument;
+  const win = iframe.contentWindow;
+
+  const subject = subjects[0];
+
+  /* ---- 1. 学科行必须有「新建大类」按钮 ---- */
+  const addBtn = doc.querySelector('.tree__add');
+  check('学科行有「新建大类」按钮', !!addBtn,
+    addBtn ? addBtn.getAttribute('aria-label') : '找不到 .tree__add');
+  check('按钮的 aria-label 指明了所属学科',
+    !!addBtn && (addBtn.getAttribute('aria-label') || '').includes(subject.name),
+    addBtn ? addBtn.getAttribute('aria-label') : '-');
+
+  /* ---- 2. 没有大类时给出指引（否则用户不知道下一步做什么）---- */
+  const hint = doc.querySelector('.tree__hint');
+  check('学科下没有大类时显示指引', !!hint,
+    hint ? hint.textContent.trim() : '找不到 .tree__hint');
+
+  /* ---- 3. 点按钮真的能建出大类（并带上正确的 parent_id）---- */
+  win.prompt = () => '极限与连续';        // 无头环境里 prompt 不出对话框，注入输入
+  let created = null;
+  const origCreate = win.API.createFolder;
+  win.API.createFolder = function (data, opts) {
+    created = data;
+    return origCreate.call(win.API, data, opts);
+  };
+  if (addBtn) { addBtn.click(); }
+  await wait(2500);
+
+  check('点按钮时把 parent_id 传成了该学科',
+    !!created && created.parent_id === subject.id,
+    JSON.stringify(created));
+  check('新建大类的名字取自输入', !!created && created.name === '极限与连续',
+    created ? created.name : '-');
+
+  const tree2 = await fetch('/folders/tree').then((r) => r.json());
+  const kids = (tree2.find((s) => s.id === subject.id) || {}).children || [];
+  check('服务端确实多出了该大类',
+    kids.some((c) => c.name === '极限与连续'),
+    JSON.stringify(kids.map((c) => c.name)));
+
+  /* ---- 4. 新建后能直接录题：下拉里出现可选项 ---- */
+  const addQ = Array.from(doc.querySelectorAll('button'))
+    .find((b) => b.textContent.trim().includes('新增题目'));
+  if (addQ) { addQ.click(); }
+  await wait(1500);
+  const sel = doc.getElementById('q-folder');
+  const usable = sel ? Array.from(sel.options).filter((o) => !o.disabled) : [];
+  check('题目弹窗的大类下拉出现可选项', usable.length >= 1,
+    sel ? Array.from(sel.options).map((o) => o.textContent.trim()).join('|') : '无下拉');
+  check('可选项就是刚建的大类',
+    usable.some((o) => o.textContent.includes('极限与连续')),
+    usable.map((o) => o.textContent.trim()).join('|'));
+  check('有可选项时不再显示"还没有大类"提示',
+    !doc.getElementById('q-folder-empty'));
+
+  /* ---- 5. 收尾：用这个大类真建一道题（端到端打通）---- */
+  let qStatus = null;
+  if (sel && usable.length) {
+    sel.value = usable[0].value;
+    sel.dispatchEvent(new win.Event('change', { bubbles: true }));
+    await wait(300);
+    const stem = doc.getElementById('q-stem');
+    const setter = Object.getOwnPropertyDescriptor(
+      win.HTMLTextAreaElement.prototype, 'value').set;
+    setter.call(stem, '端到端回归题');
+    stem.dispatchEvent(new win.Event('input', { bubbles: true }));
+    await wait(300);
+    const saveBtn = Array.from(doc.querySelectorAll('.modal button'))
+      .find((b) => /保存|创建/.test(b.textContent));
+    if (saveBtn) { saveBtn.click(); }
+    await wait(2500);
+    const qs = await fetch('/questions').then((r) => r.json());
+    qStatus = Array.isArray(qs) ? qs.length : qs;
+    check('用新建的大类成功录入一道题',
+      Array.isArray(qs) && qs.some((q) => q.stem === '端到端回归题'),
+      '题目数=' + JSON.stringify(qStatus));
+  }
+
+  const pre = document.createElement('pre');
+  pre.id = 'cat-results';
+  pre.textContent = JSON.stringify(RESULTS);
+  document.body.appendChild(pre);
+})().catch((e) => {
+  RESULTS.push({ name: '第二阶段运行无异常', ok: false,
+                 detail: (e && e.message ? e.message : String(e)) });
+  const pre = document.createElement('pre');
+  pre.id = 'cat-results';
+  pre.textContent = JSON.stringify(RESULTS);
+  document.body.appendChild(pre);
+});
+</script>
+"""
+
+
+def run_category_entry_phase(target: str) -> list[dict]:
+    """第二阶段：验证"学科下新建大类"的 UI 入口（回归用）。"""
+    out_dir = Path.home() / "AppData/Local/Temp/cuotiben_uiharness"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    harness = out_dir / "cat_harness.html"
+    harness.write_text(
+        '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">'
+        "<title>cat-harness</title></head><body>"
+        + CATEGORY_PHASE.replace("window.__TARGET__", json.dumps(target))
+        + "</body></html>", encoding="utf-8")
+    url = target.rstrip("/") + "/__harness2"
+    try:
+        proc = subprocess.run(
+            [EDGE, "--headless=new", "--disable-gpu", "--no-sandbox",
+             "--force-device-scale-factor=1", "--window-size=1500,1050",
+             "--virtual-time-budget=60000", "--dump-dom", url],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=300)
+        dom = proc.stdout or ""
+        m = re.search(r'<pre id="cat-results">(.*?)</pre>', dom, re.S)
+        if not m:
+            return [{"name": "第二阶段（大类入口）取到结果", "ok": False,
+                     "detail": "未取到 cat-results；DOM 尾部：" + dom[-400:]}]
+        raw = (m.group(1).replace("&quot;", '"').replace("&amp;", "&")
+               .replace("&lt;", "<").replace("&gt;", ">"))
+        return json.loads(raw)
+    except Exception as exc:  # noqa: BLE001
+        return [{"name": "第二阶段（大类入口）运行", "ok": False,
+                 "detail": f"{type(exc).__name__}: {exc}"}]
+
+
 def main() -> int:
     target = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8941/"
     db_arg = sys.argv[2] if len(sys.argv) > 2 else None
@@ -578,6 +743,12 @@ def main() -> int:
     raw = (raw.replace("&quot;", '"').replace("&amp;", "&")
               .replace("&lt;", "<").replace("&gt;", ">"))
     results = json.loads(raw)
+
+    # ---------- 第二阶段：大类创建入口（回归）----------
+    # 这段单独跑，因为要先把大类删掉、造出"学科下没有大类"的状态，
+    # 而第一阶段依赖已有大类来录题。放在同一个 iframe 里会把它的
+    # 前置数据破坏掉。
+    results += run_category_entry_phase(target)
 
     passed = [r for r in results if r["ok"]]
     failed = [r for r in results if not r["ok"]]

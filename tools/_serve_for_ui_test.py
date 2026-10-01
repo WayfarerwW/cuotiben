@@ -179,6 +179,16 @@ async function until(fn, timeout) {
             await FileResponse(harness_path, media_type=MIME[".html"])(scope, receive, send)
             return
 
+        # 第二份测试页：verify_ui 的第二阶段（大类创建入口）
+        # 需要独立的 harness，否则会和第一阶段的断言互相干扰。
+        if path == "/__harness2":
+            alt = harness_path.parent / "cat_harness.html"
+            if alt.is_file():
+                await FileResponse(alt, media_type=MIME[".html"])(scope, receive, send)
+                return
+            await Response("no cat_harness.html", status_code=404)(scope, receive, send)
+            return
+
         # 供截图用：加载首页并自动点开通知面板（面板内嵌复习视图）
         if path == "/__notif":
             await Response(notif_shot, media_type=MIME[".html"])(scope, receive, send)

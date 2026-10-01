@@ -119,6 +119,13 @@
                 <span class="tree__dot" aria-hidden="true"></span>
                 <span class="tree__label">{{ subject.name }}</span>
                 <span class="tree__count num">{{ subject.question_count || 0 }}</span>
+                <!-- 在学科下新建大类：题目只能挂二级大类，没有这个入口就录不进题 -->
+                <button class="icon-btn icon-btn--on-dark tree__add" type="button"
+                        :aria-label="'在 ' + subject.name + ' 下新建大类'"
+                        :title="'在「' + subject.name + '」下新建大类'"
+                        @click.stop="promptNewCategory(subject.id)">
+                  <svg class="icon icon--sm"><use href="#i-plus"></use></svg>
+                </button>
               </div>
               <ul class="tree__children" v-if="subject.children && subject.children.length">
                 <li v-for="cat in subject.children" :key="cat.id">
@@ -133,6 +140,8 @@
                   </div>
                 </li>
               </ul>
+              <!-- 学科下还没有大类时给出明确指引，否则用户不知道怎么继续 -->
+              <p v-else class="tree__hint">还没有大类，点右侧 + 新建</p>
             </li>
           </ul>
 
@@ -951,12 +960,19 @@
 
           <div class="form-row form-row--block">
             <label class="form-row__label" for="q-folder">所属大类 *</label>
-            <select class="input" id="q-folder" v-model.number="questionForm.folder_id">
+            <select class="input" id="q-folder" v-model.number="questionForm.folder_id"
+                    :aria-describedby="categoryOptions.length ? null : 'q-folder-empty'">
               <option :value="null" disabled>请选择大类</option>
               <option v-for="c in categoryOptions" :key="c.id" :value="c.id">
                 {{ c.path }}
               </option>
             </select>
+            <!-- 没有大类时下拉里一个可选项都没有，用户会卡死且不知为何，必须给出路 -->
+            <p v-if="!categoryOptions.length" id="q-folder-empty" class="form-row__hint">
+              还没有大类（二级文件夹），题目只能挂在大类下。
+              <button class="btn btn--text btn--sm" type="button"
+                      @click="newCategoryFromEditor">现在新建一个大类</button>
+            </p>
           </div>
 
           <div class="form-row form-row--block">

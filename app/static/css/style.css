@@ -871,6 +871,32 @@ pre,
   outline-offset: 2px;
 }
 
+/* 学科行右侧的「新建大类」按钮：平时隐藏，悬停或键盘聚焦时才出现。
+   用 visibility 而不是 display:none —— 后者会让按钮无法被 Tab 聚焦。 */
+.tree__add {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity var(--dur-page) var(--ease-standard);
+}
+
+.tree__row:hover .tree__add,
+.tree__add:focus-visible {
+  visibility: visible;
+  opacity: 1;
+}
+
+/* 学科下没有大类时的指引 */
+.tree__hint {
+  margin: 0 0 4px;
+  padding-left: 26px;
+  color: var(--c-sidebar-text);
+  font-size: var(--fs-aux);
+  opacity: 0.85;
+}
+
 /* 箭头旋转 90°（ui-design 6.1）*/
 .tree__caret {
   width: 16px;
@@ -1819,6 +1845,13 @@ pre,
 }
 
 .form-row .input { max-width: 320px; }
+
+/* 表单里的说明/指引文字（例如"还没有大类"时的提示） */
+.form-row__hint {
+  margin-top: 6px;
+  color: var(--c-warning-text);
+  font-size: var(--fs-aux);
+}
 .form-row--block .input { max-width: none; }
 
 .settings-actions {

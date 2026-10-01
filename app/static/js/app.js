@@ -634,6 +634,49 @@
           .catch(toastError);
       }
 
+      /**
+       * 在指定学科下新建大类（二级文件夹）。
+       *
+       * 这个入口以前**根本不存在**：全前端只有 promptNewSubject()，
+       * 它不带 parent_id，只能建出 level 1 学科。结果是——用户能建学科，
+       * 却建不出大类；而题目只能挂在二级大类下（requirements 2.2/3.10），
+       * 于是"新增题目"永远选不到所属大类，被 saveQuestion 的
+       * 「请先选择所属大类」挡住，整个录题流程走不通。
+       * 后端 POST /folders 一直支持 parent_id，缺的只是这个前端入口。
+       */
+      function promptNewCategory(subjectId) {
+        var subject = folderTree.value.filter(function (s) {
+          return s.id === subjectId;
+        })[0];
+        if (!subject) { return; }
+
+        var name = window.prompt('在「' + subject.name + '」下新建大类名称');
+        if (!name || !name.trim()) { return; }
+        var trimmed = name.trim();
+
+        API.createFolder({ name: trimmed, parent_id: subjectId })
+          .then(function (created) {
+            // 展开该学科并选中新大类，用户接着就能直接录题
+            expandedFolders[subjectId] = true;
+            toast('大类「' + trimmed + '」已创建');
+            return loadFolderTree().then(function () {
+              if (created && created.id) { currentFolderId.value = created.id; }
+            });
+          })
+          .catch(toastError);
+      }
+
+      /** 还没有大类时，让用户能从弹窗里直接去建一个（而不是干瞪眼）。 */
+      function newCategoryFromEditor() {
+        var subject = folderTree.value[0];
+        if (!subject) {
+          toast('请先在左侧新建一个学科', 'warning', true);
+          return;
+        }
+        closeQuestionEditor();
+        promptNewCategory(subject.id);
+      }
+
       /* ================= 搜索（单框双查 + 400ms 防抖）================= */
 
       function onSearchInput() {
@@ -1761,6 +1804,8 @@
         toggleFolder: toggleFolder,
         selectFolder: selectFolder,
         promptNewSubject: promptNewSubject,
+        promptNewCategory: promptNewCategory,
+        newCategoryFromEditor: newCategoryFromEditor,
         onSearchInput: onSearchInput,
         starQuestion: starQuestion,
         removeQuestion: removeQuestion,
