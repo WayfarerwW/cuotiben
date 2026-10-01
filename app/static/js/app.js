@@ -38,6 +38,9 @@
 
   var DRAFT_DEBOUNCE_MS = 500;
 
+  /** 草稿恢复提示条自动收起时间（ui-design 6.2：5s 后自动收起）。 */
+  var DRAFT_PROMPT_MS = 5000;
+
   var MASTERY_LABEL = { still_wrong: '仍易错', mastered: '已拿下' };
 
   var NAV_ITEMS = [
@@ -161,6 +164,10 @@
       var previewImage = ref(null);
       var toasts = ref([]);
       var toastSeq = 0;
+      /** 复习评价按下的按钮（用于"点击缩放 + 背景填充"的即时反馈）。 */
+      var ratingPicked = ref(null);
+      /** 刚打勾的题目 id（用于行背景短暂高亮）。 */
+      var flashedQuestionId = ref(null);
 
       /* ---------------- 设置 ---------------- */
       var settingsForm = reactive({ intervals: [3, 7, 15, 30], backfill_limit: 20, backfill_reset_days: 14 });
@@ -188,7 +195,12 @@
       var noteSearch = ref('');
       var noteSaving = ref(false);
       var draftStatusText = ref('');
-      var draftPrompt = reactive({ show: false, label: '', key: '', payload: null });
+      /** 草稿是否正在写入（用于「保存期间显示加载态」）。 */
+      var draftSaving = ref(false);
+      var draftPrompt = reactive({
+        show: false, label: '', key: '', payload: null, leaving: false,
+      });
+      var draftPromptTimer = null;
       var draftKeysInStorage = ref([]);
 
       var questionDraftTimer = null;
@@ -497,21 +509,52 @@
 
       /* ================= 打勾 ================= */
 
-      /** 从任意位置打勾：写入记录、从队列移除、刷新计数。 */
-      function checkReview(item, mastery) {
+      /**
+       * 从任意位置打勾：写入记录、从队列移除、刷新计数。
+       *
+       * 传入 opts.flashId 时，打完给那一行加一个短暂高亮
+       * （ui-design 6.3「打勾即时反馈：对勾绘制动画，行背景短暂高亮」）。
+       */
+      function checkReview(item, mastery, opts) {
         var id = item.question_id || item.id;
+        var options = opts || {};
         return API.checkReview(id, mastery)
-          .then(function () {
+          .then(function (record) {
             reviewDoneToday.value += 1;
             reviewQueue.value = reviewQueue.value.filter(function (i) {
               return i.question_id !== id;
             });
             if (activeReviewId.value === id) { activeReviewId.value = null; }
-            toast('已打勾，下次复习：' + fmtDate(arguments[0] && arguments[0].next_review_at));
+            // 注意：这里曾经写成 arguments[0]，但那是**回调自己**的 arguments，
+            // 结果 next_review_at 永远是 undefined、Toast 显示 "—"。
+            var next = record && record.next_review_at ? fmtDate(record.next_review_at) : '—';
+            toast('已打勾，下次复习：' + next);
             recomputeStats();
+            if (options.flashId) { flashRow(options.flashId); }
             return loadFolderTree();
           })
           .catch(toastError);
+      }
+
+      /** 行背景短暂高亮，动画结束后自动摘掉 class。 */
+      function flashRow(id) {
+        flashedQuestionId.value = id;
+        window.setTimeout(function () {
+          if (flashedQuestionId.value === id) { flashedQuestionId.value = null; }
+        }, 800);
+      }
+
+      /**
+       * 复习页四档评价（ui-design 6.3）：点击后按钮缩放 + 背景填充，
+       * 200ms 后自动切到下一题。
+       */
+      function rateReview(item, mastery) {
+        var key = item.question_id + ':' + mastery;
+        ratingPicked.value = key;
+        window.setTimeout(function () {
+          ratingPicked.value = null;
+          checkReview(item, mastery);
+        }, 200);
       }
 
       /* ================= 通知面板 ================= */
@@ -542,6 +585,55 @@
         if (next < 0 || next >= reviewQueue.value.length) { return; }
         activeReviewId.value = reviewQueue.value[next].question_id;
         panelAnswerOpen.value = false;
+      }
+
+      /**
+       * 全局键盘（ui-design 6.3：上一题/下一题支持键盘方向键）。
+       *
+       * 只处理「有复习上下文」时的方向键，其余按键一律放行，
+       * 避免抢掉输入框里的正常编辑。
+       */
+      function onGlobalKeydown(event) {
+        var tag = (event.target && event.target.tagName) || '';
+        var typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+          || (event.target && event.target.isContentEditable);
+        if (typing || event.altKey || event.ctrlKey || event.metaKey) { return; }
+
+        // 通知面板展开中：←/→ 切上一题/下一题
+        if (notifOpen.value && activeReviewId.value !== null) {
+          if (event.key === 'ArrowLeft') {
+            event.preventDefault();
+            stepPanelReview(-1);
+            return;
+          }
+          if (event.key === 'ArrowRight') {
+            event.preventDefault();
+            stepPanelReview(1);
+            return;
+          }
+        }
+
+        // 复习页：←/→ 在复习卡片之间滚动
+        if (currentPage.value === 'review' && reviewQueue.value.length) {
+          if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+            event.preventDefault();
+            stepReviewCard(event.key === 'ArrowRight' ? 1 : -1);
+          }
+        }
+      }
+
+      /** 复习页按 ←/→ 滚动到上/下一张卡片。 */
+      function stepReviewCard(delta) {
+        var cards = document.querySelectorAll('.review-card');
+        if (!cards.length) { return; }
+        var cardsArr = Array.prototype.slice.call(cards);
+        var current = cardsArr.findIndex(function (el) {
+          var r = el.getBoundingClientRect();
+          return r.top >= -8;
+        });
+        if (current === -1) { current = 0; }
+        var next = Math.min(Math.max(current + delta, 0), cardsArr.length - 1);
+        cardsArr[next].scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
 
       function checkFromPanel(item) { return checkReview(item); }
@@ -727,12 +819,17 @@
       /** 输入时防抖 500ms 存 localStorage。 */
       function onNoteEdit() {
         window.clearTimeout(noteDraftTimer);
+        // 「保存期间显示加载态」（ui-design 6.2）：按下输入即进入保存中，
+        // 防抖窗口结束、真正写完之后再切回「已自动保存」。
+        draftSaving.value = true;
+        draftStatusText.value = '正在保存草稿…';
         noteDraftTimer = window.setTimeout(function () {
           var ok = storage.set(noteDraftKey(noteForm.id), JSON.stringify({
             title: noteForm.title,
             content: noteForm.content,
             at: new Date().toISOString(),
           }));
+          draftSaving.value = false;
           if (ok) {
             lastNoteSavedAt = Date.now();
             tickSavedAt();
@@ -757,6 +854,7 @@
         var key = noteDraftKey(noteForm.id);
         var raw = storage.get(key);
         draftPrompt.show = false;
+        window.clearTimeout(draftPromptTimer);
         if (!raw || noteForm.id === null && !raw) { return; }
         try {
           var saved = JSON.parse(raw);
@@ -766,7 +864,24 @@
           draftPrompt.key = key;
           draftPrompt.label = fmtDate(saved.at);
           draftPrompt.payload = saved;
+          // 顶部滑入提示条，5s 后自动收起（ui-design 6.2）
+          draftPromptTimer = window.setTimeout(function () {
+            if (draftPrompt.show) {
+              draftPrompt.leaving = true;
+              window.setTimeout(function () {
+                draftPrompt.show = false;
+                draftPrompt.leaving = false;
+              }, 200);
+            }
+          }, DRAFT_PROMPT_MS);
         } catch (e) { /* 草稿损坏就当没有 */ }
+      }
+
+      /** 用户手动点了「恢复」或「忽略」时，取消自动收起倒计时。 */
+      function closeDraftPrompt() {
+        window.clearTimeout(draftPromptTimer);
+        draftPrompt.show = false;
+        draftPrompt.leaving = false;
       }
 
       function restoreDraft() {
@@ -776,12 +891,12 @@
           lastNoteSavedAt = Date.parse(draftPrompt.payload.at) || Date.now();
           tickSavedAt();
         }
-        draftPrompt.show = false;
+        closeDraftPrompt();
       }
 
       function discardDraft() {
         if (draftPrompt.key) { storage.remove(draftPrompt.key); }
-        draftPrompt.show = false;
+        closeDraftPrompt();
         loadDraftKeyList();
       }
 
@@ -924,6 +1039,7 @@
 
       onMounted(function () {
         window.addEventListener('hashchange', onHashChange);
+        window.addEventListener('keydown', onGlobalKeydown);
         loadPage(currentPage.value);
         // 通知每 60s 轮询（requirements 2.9 要求 30~60s）
         pollTimer = window.setInterval(function () {
@@ -935,6 +1051,7 @@
 
       onUnmounted(function () {
         window.removeEventListener('hashchange', onHashChange);
+        window.removeEventListener('keydown', onGlobalKeydown);
         window.clearInterval(pollTimer);
         window.clearInterval(savedAtTicker);
       });
@@ -980,6 +1097,8 @@
         answersOpen: answersOpen,
         previewImage: previewImage,
         toasts: toasts,
+        ratingPicked: ratingPicked,
+        flashedQuestionId: flashedQuestionId,
         // 题目弹窗
         questionEditor: questionEditor,
         questionForm: questionForm,
@@ -994,6 +1113,7 @@
         noteSearch: noteSearch,
         noteSaving: noteSaving,
         draftStatusText: draftStatusText,
+        draftSaving: draftSaving,
         draftPrompt: draftPrompt,
         draftKeysInStorage: draftKeysInStorage,
         // 设置
@@ -1013,6 +1133,7 @@
         starQuestion: starQuestion,
         removeQuestion: removeQuestion,
         checkReview: checkReview,
+        rateReview: rateReview,
         toggleNotif: toggleNotif,
         expandInPanel: expandInPanel,
         stepPanelReview: stepPanelReview,

@@ -1935,3 +1935,187 @@ pre,
     font-size: var(--fs-aux);
   }
 }
+/* ==========================================================================
+   13. 交互细节与动画（docs/ui-design.md 第 6 节）
+   --------------------------------------------------------------------------
+   时长与缓动一律引用第 1 节的令牌，不写死数值：
+     --dur-page(200ms)  页面切换
+     --dur-tree(250ms)  文件夹树 / 上一题下一题滑动
+     --dur-answer(300ms) 答案展开
+     --dur-sidebar(300ms) 侧边栏宽度
+   ========================================================================== */
+
+/* --- 6.1 页面切换：淡入淡出 200ms --- */
+/*
+   用 CSS 动画而不是 Vue 的 <transition>：
+   Vue 的过渡靠 requestAnimationFrame 逐步加/去类名，在无头浏览器与虚拟时间
+   下 rAF 不触发，旧页面会卡在 leave 阶段、新页面永不出现（实测踩过）。
+   这里靠「:key 变化 -> 元素重建 -> 动画自动重播」实现，只依赖元素创建。
+*/
+.page {
+  /* 给 .main > * + * 的垂直节奏让位：这个包装层自己不带外边距 */
+  min-width: 0;
+  animation: page-fade var(--dur-page) var(--ease-standard);
+}
+
+@keyframes page-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* --- 6.2 标签输入：动画插入 + 点击 x 缩放移除 --- */
+.tag-input__tags {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tag-enter-active {
+  transition: opacity var(--dur-page) var(--ease-standard),
+              transform var(--dur-page) var(--ease-standard);
+}
+
+.tag-leave-active {
+  transition: opacity var(--dur-page) var(--ease-standard),
+              transform var(--dur-page) var(--ease-standard);
+  /* 移除时脱离文档流，让其余标签平滑补位 */
+  position: absolute;
+}
+
+.tag-enter-from {
+  opacity: 0;
+  transform: scale(0.7);
+}
+
+.tag-leave-to {
+  opacity: 0;
+  transform: scale(0.6);
+}
+
+.tag-move {
+  transition: transform var(--dur-tree) var(--ease-standard);
+}
+
+/* 点击 x 时的即时缩放反馈（ui-design 6.2「点击 x 缩放移除」）*/
+.tag__remove:active { transform: scale(0.8); }
+
+.tag__remove {
+  transition: transform 120ms var(--ease-standard), opacity var(--dur-page);
+}
+
+/* --- 6.3 答案展开/收起：高度动画 300ms ease + 图标旋转 --- */
+.answer-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.answer-toggle__caret {
+  transition: transform var(--dur-answer) var(--ease-standard);
+}
+
+.answer-toggle[aria-expanded="true"] .answer-toggle__caret {
+  transform: rotate(90deg);
+}
+
+.answer-enter-active,
+.answer-leave-active {
+  overflow: hidden;
+  transition: max-height var(--dur-answer) var(--ease-standard),
+              opacity var(--dur-answer) var(--ease-standard),
+              margin-top var(--dur-answer) var(--ease-standard);
+}
+
+/* 高度动画需要一个明确的上限值：内容通常远小于 400px */
+.answer-enter-from,
+.answer-leave-to {
+  max-height: 0;
+  opacity: 0;
+  margin-top: 0;
+}
+
+.answer-enter-to,
+.answer-leave-from {
+  max-height: 400px;
+  opacity: 1;
+}
+
+/* --- 6.3 复习评价按钮：scale(0.95) → scale(1) + 背景填充 --- */
+.review-rate {
+  transition: transform 120ms var(--ease-standard),
+              background-color var(--dur-page) var(--ease-standard),
+              border-color var(--dur-page) var(--ease-standard),
+              color var(--dur-page) var(--ease-standard);
+}
+
+.review-rate:active { transform: scale(0.95); }
+
+/* 四档配色：完全不会(红) / 有点模糊(橙) / 基本掌握(蓝) / 已掌握(绿) */
+.review-rate--0 { background: var(--c-surface); border: 1px solid var(--c-danger); color: #C53030; }
+.review-rate--1 { background: var(--c-surface); border: 1px solid var(--c-warning); color: #B7791F; }
+.review-rate--2 { background: var(--c-surface); border: 1px solid var(--c-primary); color: var(--c-primary); }
+.review-rate--3 { background: var(--c-surface); border: 1px solid var(--c-success); color: #2F855A; }
+
+/* 选中态：背景填充 + 白字（点击后 200ms 内可见，随后自动切题） */
+.review-rate.is-picked { color: #fff; transform: scale(0.95); }
+.review-rate--0.is-picked { background: var(--c-danger); }
+.review-rate--1.is-picked { background: var(--c-warning); }
+.review-rate--2.is-picked { background: var(--c-primary); }
+.review-rate--3.is-picked { background: var(--c-success); }
+
+/* --- 6.3 打勾：对勾绘制动画 + 行背景短暂高亮 --- */
+.check-mark {
+  stroke-dasharray: 26;
+  stroke-dashoffset: 0;
+}
+
+/* 打勾瞬间把对勾"画"出来 */
+.data-table tbody tr.is-flash .check-mark {
+  animation: draw-check 400ms var(--ease-standard);
+}
+
+@keyframes draw-check {
+  from { stroke-dashoffset: 26; }
+  to { stroke-dashoffset: 0; }
+}
+
+/* 行背景短暂高亮 */
+.data-table tbody tr.is-flash {
+  animation: row-flash 800ms var(--ease-standard);
+}
+
+@keyframes row-flash {
+  0%   { background: rgba(104, 211, 145, 0.28); }
+  100% { background: transparent; }
+}
+
+/* --- 6.3 上一题/下一题：内容区左右滑动 250ms --- */
+.review-card {
+  transition: transform var(--dur-tree) var(--ease-standard),
+              box-shadow var(--dur-page) var(--ease-standard);
+}
+
+/* 卡片刚滚入视口时的轻微右侧滑入 */
+.review-card.slide-from-right { animation: slide-from-right var(--dur-tree) var(--ease-standard); }
+
+@keyframes slide-from-right {
+  from { opacity: 0.6; transform: translateX(24px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* --- 6.2 草稿恢复提示条：顶部滑入，5s 后自动收起 --- */
+.draft-banner {
+  transition: opacity var(--dur-page) var(--ease-standard),
+              transform var(--dur-page) var(--ease-standard);
+}
+
+.draft-banner--leaving {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+/* --- 6.1 进度条：数值变化平滑过渡 500ms --- */
+.progress__bar { transition: width 500ms var(--ease-standard); }
+
+/* --- 减弱动效时，上述动画一并关闭（ui-design 第 8 节）--- */

@@ -255,6 +255,41 @@ def main() -> int:
     check("支持 prefers-reduced-motion",
           "prefers-reduced-motion" in CSS)
 
+    # ---------- 6. 交互细节与动画 ----------
+    print("\n-- 6 交互细节与动画 --")
+    check("6.1 侧边栏 300ms ease-in-out",
+          "--dur-sidebar: 300ms" in CSS and "--ease-sidebar: ease-in-out" in CSS)
+    check("6.1 页面切换淡入淡出 200ms",
+          "page-fade" in CSS and "--dur-page: 200ms" in CSS)
+    check("6.1 文件夹树高度动画 250ms + 箭头旋转 90°",
+          "--dur-tree: 250ms" in CSS and "rotate(90deg)" in CSS)
+    check("6.2 输入框焦点外发光 0 0 3px rgba(74,124,219,0.2)",
+          "0 0 3px var(--c-primary-ring)" in CSS)
+    check("6.2 标签动画插入 / 缩放移除",
+          "tag-enter-from" in CSS and "tag-leave-to" in CSS
+          and "transition-group" in HTML)
+    check("6.2 草稿防抖 500ms", "DRAFT_DEBOUNCE_MS = 500" in APP_JS)
+    check("6.2 草稿保存期间显示加载态",
+          "draftSaving" in APP_JS and "btn__spinner" in HTML)
+    check("6.2 草稿提示条 5s 后自动收起",
+          "DRAFT_PROMPT_MS = 5000" in APP_JS and "draft-banner--leaving" in CSS)
+    check("6.3 答案展开高度动画 300ms + 图标旋转",
+          "answer-enter-active" in CSS and "max-height" in CSS
+          and "answer-toggle__caret" in CSS)
+    check("6.3 评价反馈 scale(0.95) + 背景填充",
+          "review-rate:active" in CSS and "review-rate--0.is-picked" in CSS)
+    check("6.3 评价后 200ms 自动切题", "function rateReview" in APP_JS)
+    check("6.3 上一题/下一题支持方向键",
+          "onGlobalKeydown" in APP_JS and "ArrowLeft" in APP_JS)
+    check("6.3 方向键不劫持输入框", "typing" in APP_JS and "TEXTAREA" in APP_JS)
+    check("6.3 打勾绘制动画 + 行高亮",
+          "draw-check" in CSS and "row-flash" in CSS and "is-flash" in HTML)
+    check("6.4 成功 3s / 警告 5s", "5000 : 3000" in APP_JS)
+    check("6.4 Toast 三色齐全",
+          all(k in CSS for k in ("toast--success", "toast--warning", "toast--error")))
+    check("6.4 空状态含插画+文案+按钮",
+          "empty-state__art" in CSS and "empty-state__title" in HTML)
+
     # ---------- 结构完整性 ----------
     print("\n-- 结构完整性 --")
 

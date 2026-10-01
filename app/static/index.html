@@ -255,14 +255,19 @@
                   </div>
                   <p v-if="item.stem" class="review__stem">{{ item.stem }}</p>
 
-                  <button class="btn btn--text btn--sm" type="button"
+                  <button class="btn btn--text btn--sm answer-toggle" type="button"
                           :aria-expanded="panelAnswerOpen ? 'true' : 'false'"
                           @click="panelAnswerOpen = !panelAnswerOpen">
+                    <svg class="icon icon--sm answer-toggle__caret" aria-hidden="true">
+                      <use href="#i-chevron-right"></use>
+                    </svg>
                     {{ panelAnswerOpen ? '收起答案' : '展开答案' }}
                   </button>
-                  <p v-if="panelAnswerOpen" class="review__answer">
-                    {{ item.answer || '（未填写答案）' }}
-                  </p>
+                  <transition name="answer" :duration="300">
+                    <p v-if="panelAnswerOpen" class="review__answer">
+                      {{ item.answer || '（未填写答案）' }}
+                    </p>
+                  </transition>
 
                   <div class="notif__item-actions">
                     <button class="btn btn--primary btn--sm" type="button"
@@ -349,6 +354,19 @@
             </button>
           </div>
         </div>
+
+        <!--
+          页面切换：淡入淡出 200ms（ui-design 6.1）。
+
+          这里**不用** <transition>，而是靠「:key 变化 -> 元素重建 -> CSS 动画重播」：
+          Vue 的 <transition> 依赖 requestAnimationFrame 推进类名阶段，在无头
+          浏览器/虚拟时间下 rAF 不触发，旧页面会卡在 leave 状态、新页面永远
+          不进入（这个坑实测踩过）。用 CSS 动画只依赖元素创建，行为确定，
+          也更容易被测试覆盖。
+
+          动画定义见 style.css 的 .page { animation: page-fade ... }。
+        -->
+        <div class="page" :key="currentPage" :data-page="currentPage">
 
         <!-- 加载中 -->
         <div v-if="loading" class="placeholder">加载中…</div>
@@ -469,7 +487,8 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="q in filteredQuestions" :key="q.id">
+                <tr v-for="q in filteredQuestions" :key="q.id"
+                    :class="{ 'is-flash': flashedQuestionId === q.id }">
                   <td class="cell-stem" :data-label="'题干'">
                     {{ q.stem || '（无题干，仅图片）' }}
                   </td>
@@ -499,8 +518,13 @@
                     <div class="row-actions">
                       <button class="btn btn--text btn--sm" type="button"
                               @click="openQuestionEditor(q)">编辑</button>
-                      <button class="btn btn--text btn--sm" type="button"
-                              @click="checkReview(q)">打勾</button>
+                      <button class="btn btn--text btn--sm check-btn" type="button"
+                              @click="checkReview(q, null, { flashId: q.id })">
+                        <svg class="icon icon--sm check-mark" aria-hidden="true">
+                          <use href="#i-check"></use>
+                        </svg>
+                        打勾
+                      </button>
                       <button class="btn btn--text btn--sm text-danger" type="button"
                               @click="removeQuestion(q)">删除</button>
                     </div>
@@ -563,24 +587,31 @@
                 <span v-for="t in item.tags" :key="t.id" class="tag">{{ t.name }}</span>
               </div>
 
-              <button class="btn btn--text btn--sm" type="button"
+              <button class="btn btn--text btn--sm answer-toggle" type="button"
                       :aria-expanded="answersOpen[item.question_id] ? 'true' : 'false'"
                       @click="toggleAnswer(item.question_id)">
+                <svg class="icon icon--sm answer-toggle__caret" aria-hidden="true">
+                  <use href="#i-chevron-right"></use>
+                </svg>
                 {{ answersOpen[item.question_id] ? '收起答案' : '显示答案' }}
               </button>
-              <p v-if="answersOpen[item.question_id]" class="review__answer">
-                {{ item.answer || '（未填写答案）' }}
-              </p>
+              <!-- 高度动画 300ms ease（ui-design 6.3）；:duration 同上，见页面切换处的说明 -->
+              <transition name="answer" :duration="300">
+                <p v-if="answersOpen[item.question_id]" class="review__answer">
+                  {{ item.answer || '（未填写答案）' }}
+                </p>
+              </transition>
 
               <div class="review-card__actions">
-                <button class="btn btn--danger btn--sm" type="button"
-                        @click="checkReview(item, 0)">完全不会</button>
-                <button class="btn btn--secondary btn--sm" type="button"
-                        @click="checkReview(item, 1)">有点模糊</button>
-                <button class="btn btn--secondary btn--sm" type="button"
-                        @click="checkReview(item, 2)">基本掌握</button>
-                <button class="btn btn--primary btn--sm" type="button"
-                        @click="checkReview(item, 3)">已掌握</button>
+                <button v-for="c in masteryChoices" :key="c.value" type="button"
+                        class="btn btn--sm review-rate"
+                        :class="[
+                          'review-rate--' + c.value,
+                          { 'is-picked': ratingPicked === item.question_id + ':' + c.value }
+                        ]"
+                        @click="rateReview(item, c.value)">
+                  {{ c.label }}
+                </button>
               </div>
             </article>
           </section>
@@ -588,7 +619,8 @@
 
         <!-- ============ 记事本 ============ -->
         <template v-else-if="currentPage === 'notes'">
-          <div v-if="draftPrompt.show" class="draft-banner" role="status">
+          <div v-if="draftPrompt.show" class="draft-banner"
+               :class="{ 'draft-banner--leaving': draftPrompt.leaving }" role="status">
             <svg class="icon icon--sm"><use href="#i-alert"></use></svg>
             <span>检测到上次未保存的草稿（{{ draftPrompt.label }}）</span>
             <span class="topbar__spacer"></span>
@@ -626,7 +658,10 @@
             <!-- 右侧编辑器 -->
             <section class="notes-editor card">
               <div class="notes-editor__head">
-                <span class="text-aux" aria-live="polite">{{ draftStatusText }}</span>
+                <span class="text-aux draft-status" aria-live="polite">
+                  <span v-if="draftSaving" class="btn__spinner" aria-hidden="true"></span>
+                  {{ draftStatusText }}
+                </span>
                 <span class="topbar__spacer"></span>
                 <button v-if="noteForm.id" class="btn btn--text btn--sm text-danger"
                         type="button" @click="removeNote(noteForm.id)">删除</button>
@@ -794,6 +829,8 @@
           </section>
         </template>
 
+        </div>
+
       </div>
     </main>
 
@@ -846,11 +883,14 @@
           <div class="form-row form-row--block">
             <label class="form-row__label" for="q-tags">标签（回车创建）</label>
             <div class="tag-input">
-              <span v-for="(t, i) in questionForm.tags" :key="t" class="tag">
-                {{ t }}
-                <button class="tag__remove" type="button" :aria-label="'移除标签 ' + t"
-                        @click="questionForm.tags.splice(i, 1); onQuestionEdit()">×</button>
-              </span>
+              <!-- 标签插入/移除动画（ui-design 6.2：动画插入、点击 x 缩放移除） -->
+              <transition-group name="tag" tag="span" class="tag-input__tags">
+                <span v-for="(t, i) in questionForm.tags" :key="t" class="tag">
+                  {{ t }}
+                  <button class="tag__remove" type="button" :aria-label="'移除标签 ' + t"
+                          @click="questionForm.tags.splice(i, 1); onQuestionEdit()">×</button>
+                </span>
+              </transition-group>
               <input class="tag-input__field" id="q-tags" type="text"
                      v-model="tagDraft" placeholder="输入后回车"
                      @keydown.enter.prevent="addTag"
