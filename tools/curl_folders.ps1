@@ -8,6 +8,7 @@
 # 另外 Get-Content -Encoding utf8 会给内容加 BOM，导致 ConvertFrom-Json 失败，故用 .NET 读取。
 
 $ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
@@ -139,6 +140,50 @@ try {
     # --- 树结构 ---
     Show "11. GET /folders/tree（两级树）" (Invoke-Curl @("$base/folders/tree")) '200'
 
+    # --- 树节点字段断言 ---
+    # 后端决定保留完整字段（前端需要 sort_order 排序、question_count 显示题目数）。
+    # 这里把该决定固化成回归保护，避免日后有人精简响应时无声破坏前端。
+    Write-Host ""
+    Write-Host "### 11b. 树节点字段完整性" -ForegroundColor Cyan
+    $nodes = Json (Invoke-Curl @("$base/folders/tree")).body
+    # 后端决定保留完整字段（前端需要 level 判断层级、sort_order 排序、question_count 显示题目数）。
+    # 这里把该决定固化成回归保护，避免日后有人精简响应时无声破坏前端。
+    $required = @('id', 'name', 'parent_id', 'level', 'sort_order',
+                  'created_at', 'deleted_at', 'children', 'question_count')
+    $top = $nodes[0]
+    $actual = @($top.PSObject.Properties.Name)
+    $missing = @($required | Where-Object { $_ -notin $actual })
+    if ($missing.Count -eq 0) {
+        Write-Host "  -> 顶层节点含全部 $($required.Count) 个字段" -ForegroundColor Green
+        $script:pass++
+    } else {
+        Write-Host "  -> 顶层节点缺字段: $($missing -join ', ')" -ForegroundColor Red
+        $script:fail++
+    }
+    # 严格模式下空数组取 [0] 会抛 IndexOutOfRange，所以挑一个确实有子节点的学科，
+    # 并且层级断言必须与子节点取自同一个父节点，否则 parent 指向会对不上。
+    $parentNode = @($nodes | Where-Object { @($_.children).Count -gt 0 })[0]
+    $child = @($parentNode.children)[0]
+    $childActual = @($child.PSObject.Properties.Name)
+    $childMissing = @($required | Where-Object { $_ -notin $childActual })
+    if ($childMissing.Count -eq 0) {
+        Write-Host "  -> 子节点字段与顶层一致（递归模型）" -ForegroundColor Green
+        $script:pass++
+    } else {
+        Write-Host "  -> 子节点缺字段: $($childMissing -join ', ')" -ForegroundColor Red
+        $script:fail++
+    }
+    # 注意：JSON null 在 Windows PowerShell 5.1 里会变成空字符串 ''，
+    # 所以不能靠 `-eq $null` 判断 parent_id。
+    if ([string]::IsNullOrEmpty($parentNode.parent_id) -and $parentNode.level -eq 1 `
+        -and $child.level -eq 2 -and $child.parent_id -eq $parentNode.id) {
+        Write-Host "  -> 层级正确：学科 parent_id=null/level=1，大类 level=2 且 parent 指向该学科" -ForegroundColor Green
+        $script:pass++
+    } else {
+        Write-Host "  -> 层级不符：parent.parent_id=[$($parentNode.parent_id)] parent.level=$($parentNode.level) child.level=$($child.level) child.parent_id=$($child.parent_id) parent.id=$($parentNode.id)" -ForegroundColor Red
+        $script:fail++
+    }
+
     # --- 重命名 / 排序 ---
     Show "12. PUT 重命名大类 -> 200" (Invoke-Json 'PUT' "$base/folders/$catId" '{"name":"极限、连续与洛必达"}') '200'
     Show "13. PUT 改成同级已有名字 -> 409" (Invoke-Json 'PUT' "$base/folders/$catId" '{"name":"导数与微分"}') '409'
@@ -150,6 +195,25 @@ try {
     # --- 删除 ---
     Show "17. DELETE 大类 -> 200" (Invoke-Curl @('-X', 'DELETE', "$base/folders/$catId")) '200'
     Show "18. 重复 DELETE -> 404" (Invoke-Curl @('-X', 'DELETE', "$base/folders/$catId")) '404'
+
+    # 直接断言 deleted_at IS NULL 过滤生效：已删名称不得出现在树里
+    Write-Host ""
+    Write-Host "### 18b. 已软删除的文件夹不出现在树中" -ForegroundColor Cyan
+    $treeRaw = (Invoke-Curl @("$base/folders/tree")).body
+    $gone = ($treeRaw -notmatch '极限、连续与洛必达') -and ($treeRaw -notmatch '极限与连续')
+    $hasDeletedAtNonNull = $treeRaw -match '"deleted_at":"20'
+    Write-Host "  原始响应: $treeRaw"
+    if ($gone) {
+        Write-Host "  -> 已删除名称未出现，符合预期" -ForegroundColor Green; $script:pass++
+    } else {
+        Write-Host "  -> 已删除名称仍出现，不符合预期" -ForegroundColor Red; $script:fail++
+    }
+    if (-not $hasDeletedAtNonNull) {
+        Write-Host "  -> 树中无 deleted_at 非空节点，符合预期" -ForegroundColor Green; $script:pass++
+    } else {
+        Write-Host "  -> 树中出现 deleted_at 非空的节点，不符合预期" -ForegroundColor Red; $script:fail++
+    }
+
     Show "19. 删除后树（该大类应消失）" (Invoke-Curl @("$base/folders/tree")) '200'
 
     # --- 有题目时拒删（用 Python 直接插一道题，避免再开一个写接口）---
