@@ -493,6 +493,25 @@ def main() -> int:
             check("无积压题时 affected_count=0 且不报错",
                   res_empty.affected_count == 0 and res_empty.affected_question_ids == [],
                   f"affected={res_empty.affected_count}")
+            # 曾经因为"无积压"的提前返回跳过了 days 计算，导致 spread_days 恒为 None，
+            # 调用方无法判断本次请求实际用的是多大窗口。这里锁住该回归。
+            res_empty_spread = rsvc2.reset_backlog(db, spread=True, spread_days=7,
+                                                   now=base2)
+            check("无积压题时 spread_days 仍回显生效窗口",
+                  res_empty_spread.mode == "spread"
+                  and res_empty_spread.spread_days == 7,
+                  f"{res_empty_spread.mode}/{res_empty_spread.spread_days}")
+            res_empty_default = rsvc2.reset_backlog(db, spread=True, now=base2)
+            # 期望值取自当前配置，而不是写死 14 —— 本脚本前面已把
+            # backfill_reset_days 改成过别的值
+            want_days = settings_service.get_backfill_reset_days(db)
+            check("无积压题且未传 days 时回退 settings.backfill_reset_days",
+                  res_empty_default.spread_days == want_days,
+                  f"{res_empty_default.spread_days}（配置值 {want_days}）")
+            res_empty_all = rsvc2.reset_backlog(db, now=base2)
+            check("非分散模式无积压时 spread_days 为 None",
+                  res_empty_all.spread_days is None,
+                  str(res_empty_all.spread_days))
 
             # ---------- 9.6 连续补卡天数（用独立库，数据完全可控）----------
             # 上面的库里已有大量"今天"产生的补卡记录，无法精确构造断档场景，

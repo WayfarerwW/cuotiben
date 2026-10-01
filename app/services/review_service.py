@@ -451,11 +451,9 @@ def reset_backlog(
     intervals = settings_service.get_intervals(db)
     base_days = intervals[0]
 
-    wanted = backlog_question_ids(db, now=moment, tz=tz)
-    if not wanted:
-        return BackfillResetResult(affected_count=0, affected_question_ids=[],
-                                   mode="spread" if spread else "all")
-
+    # 先算出实际生效的分散窗口，再判断有没有积压题。
+    # 顺序很重要：否则"无积压题"的提前返回会跳过 days 的计算，
+    # 让调用方拿到 spread_days=None，无法判断本次请求到底用的是多大的窗口。
     if spread:
         days = spread_days if spread_days is not None else (
             settings_service.get_backfill_reset_days(db)
@@ -463,6 +461,12 @@ def reset_backlog(
         days = max(1, int(days))
     else:
         days = 0
+
+    wanted = backlog_question_ids(db, now=moment, tz=tz)
+    if not wanted:
+        return BackfillResetResult(affected_count=0, affected_question_ids=[],
+                                   mode="spread" if spread else "all",
+                                   spread_days=days if spread else None)
 
     # 保持队列顺序（重点优先 + 逾期最久）：错开时重点题排在更近的日期
     day_start, day_end = today_bounds(moment, tz)

@@ -120,16 +120,18 @@ python tools/verify_heic.py            # HEIC 读写与图片压缩管线
 python tools/audit_routes.py           # 接口审计：命名一致性 + 文档与实现的字段级差异
 ```
 
-`tools/curl_*.ps1` 会真实启动 uvicorn 并用 curl 打一遍接口
-（用独立临时库，不碰 `data/cuotiben.db`）：
+`tools/curl_*.ps1` 会真实启动 uvicorn 打一遍接口（用独立临时库与空闲端口，
+不碰 `data/cuotiben.db`）：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools/curl_folders.ps1
 powershell -ExecutionPolicy Bypass -File tools/curl_questions.ps1
 powershell -ExecutionPolicy Bypass -File tools/curl_review.ps1
+powershell -ExecutionPolicy Bypass -File tools/curl_api_js.ps1   # 前端 api.js 对真后端的契约自检
 ```
 
 > Windows PowerShell 5.1 注意：这些脚本必须存为 **UTF-8 with BOM**，否则中文会被按 GBK 解读而报语法错误。
+> `curl_api_js.ps1` 需要 node 在 PATH 中（断言逻辑在 `tools/verify_api_js.js`）。
 
 ## 文档
 
