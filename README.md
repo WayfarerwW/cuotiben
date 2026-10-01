@@ -104,12 +104,22 @@ python run.py
 ### 环境自检
 
 ```bash
-python tools/verify_db_schemas.py   # 数据库连接、建表、settings 默认值、Pydantic schema
-python tools/verify_models.py       # ORM 表结构、外键级联、datetime 往返
-python tools/verify_softdelete.py   # 软删除与部分唯一索引
-python tools/verify_font.py         # 中文 PDF 渲染与字体嵌入
-python tools/verify_heic.py         # HEIC 读写与图片压缩管线
+python tools/verify_db_schemas.py      # 数据库连接、建表、settings 默认值、Pydantic schema
+python tools/verify_models.py          # ORM 表结构、外键级联、datetime 往返
+python tools/verify_softdelete.py      # 软删除与部分唯一索引
+python tools/verify_folders_service.py # folders 业务逻辑（两级结构、同名、级联软删除）
+python tools/verify_font.py            # 中文 PDF 渲染与字体嵌入
+python tools/verify_heic.py            # HEIC 读写与图片压缩管线
 ```
+
+`tools/curl_folders.ps1` 会真实启动 uvicorn 并用 curl 打一遍 `/folders` 全部接口
+（用独立临时库，不碰 `data/cuotiben.db`）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/curl_folders.ps1
+```
+
+> Windows PowerShell 5.1 注意：脚本存为 **UTF-8 with BOM**，否则中文会被按 GBK 解读而报语法错误。
 
 ## 文档
 

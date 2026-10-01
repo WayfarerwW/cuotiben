@@ -26,6 +26,7 @@
 ### 3.1 后端
 - 目录分层：`routers/`（路由）、`services/`（业务逻辑）、`models/`（ORM）
 - 路由只做参数校验与响应，业务逻辑放 services
+- 业务逻辑一律放 `services/`，`router` 和 `main.py` 只做调度与挂载
 - 所有 datetime 用 `DateTime(timezone=True)`，存 UTC
 - 外键加 `ON DELETE CASCADE`
 - 删除用软删除（`deleted_at`），除非明确要求物理删除
@@ -44,6 +45,27 @@
 - JS：camelCase
 - 数据库表名：复数小写（folders、questions、review_records）
 - 组件文件名：PascalCase（NotificationPanel.vue）
+
+### 3.4 后端分层规范
+
+新增一个功能模块时，固定按这四层落地，缺一不可：
+
+| 层 | 文件 | 职责 |
+|---|---|---|
+| 模型 | `models/xxx.py` | 表结构与关系，不写业务规则 |
+| 业务 | `services/xxx_service.py` | 业务逻辑 + 数据库操作，是唯一的写入入口 |
+| 路由 | `routers/xxx.py` | 只做参数校验和响应组装 |
+| 契约 | `schemas.py` | 请求/响应模型 |
+
+- **router 只做参数校验和响应组装**：读参数、调 service、返回结果。
+  不要在 router 里写查询、判断业务规则、拼装跨表数据。
+- **service 承载业务逻辑和数据库操作**：查询、校验规则、事务边界都在这里。
+  service 接收 `Session` 作为参数，不自行开新会话。
+- **`main.py` 通过 `register_routers(app)` 统一挂载**：所有 router 在
+  `app/routers/__init__.py` 汇总后一次性 include，不在业务模块里各自注册。
+- 业务异常在 service 层抛出（如 `FolderNotFoundError`、
+  `DuplicateFolderNameError`），由 router 转成对应 HTTP 状态码；
+  service 不直接抛 `HTTPException`，保持与 Web 框架解耦。
 
 ## 四、关键规则（易错点，务必遵守）
 

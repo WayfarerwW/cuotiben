@@ -138,7 +138,7 @@ def main() -> int:
         from app.schemas import (
             BackfillResetRequest,
             FolderCreate,
-            FolderTreeOut,
+            FolderTree,
             NoteCreate,
             QuestionCreate,
             QuestionOut,
@@ -203,15 +203,15 @@ def main() -> int:
                   q_out.id == q.id and len(q_out.tags) == 1 and len(q_out.images) == 1,
                   f"tags={[t.name for t in q_out.tags]} images={len(q_out.images)}")
 
-            tree = FolderTreeOut.model_validate(f)
+            tree = FolderTree.model_validate(f)
             # children 是真实 relationship，from_attributes 会自动填充整棵树
-            check("FolderTreeOut 递归构建子树",
+            check("FolderTree 递归构建子树",
                   tree.name == "高等数学" and len(tree.children) == 1
                   and tree.children[0].name == "极限与连续",
                   f"children={[c.name for c in tree.children]}")
 
             # 二级节点（叶子）不应再有 children，且 parent 反向关系不会造成循环
-            leaf = FolderTreeOut.model_validate(cat)
+            leaf = FolderTree.model_validate(cat)
             check("叶子节点 children 为空且无循环",
                   leaf.name == "极限与连续" and leaf.children == [],
                   f"leaf.children={leaf.children}")

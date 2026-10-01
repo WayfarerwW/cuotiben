@@ -63,11 +63,14 @@ class FolderCreate(BaseModel):
 
 
 class FolderUpdate(BaseModel):
-    """PUT /folders/{id} —— 重命名 / 调序 / 移动。"""
+    """PUT /folders/{id} —— 重命名 / 调序。
+
+    parent_id 不在这里修改：需求 2.2 只要求两级结构，移动节点会引入
+    "跨级搬运"的额外校验，暂不支持；如需移动另开接口。
+    """
 
     name: str | None = Field(default=None, min_length=1, max_length=200)
     sort_order: int | None = None
-    parent_id: int | None = None
 
 
 class FolderOut(OrmBase):
@@ -80,10 +83,10 @@ class FolderOut(OrmBase):
     deleted_at: datetime | None
 
 
-class FolderTreeOut(FolderOut):
+class FolderTree(FolderOut):
     """GET /folders/tree —— 两级树，children 只在学科节点上有值。"""
 
-    children: list[FolderTreeOut] = Field(default_factory=list)
+    children: list[FolderTree] = Field(default_factory=list)
     # 该文件夹下的题目数量（列表页展示用）
     question_count: int = 0
 

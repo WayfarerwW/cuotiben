@@ -103,12 +103,16 @@ def health() -> dict:
     }
 
 
-def register_routers() -> None:
-    """挂载业务路由。
+def register_routers(app: FastAPI) -> None:
+    """统一挂载所有业务路由（AGENTS.md 3.4）。
 
-    各路由模块实现后在 app/routers/__init__.py 里收集，并在此调用；
-    例如：
-        from .routers import api_router
-        app.include_router(api_router)
-    当前 routers/ 下尚未实现任何模块，因此这里还是空的。
+    各模块的 router 在 app/routers/__init__.py 汇总为 api_router，
+    这里只负责 include 一次，不在业务模块里各自注册。
     """
+    from .routers import api_router
+
+    app.include_router(api_router)
+
+
+# 模块加载时即完成路由挂载（放在函数定义之后）
+register_routers(app)
