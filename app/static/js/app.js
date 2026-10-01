@@ -625,6 +625,7 @@
         if (notifOpen.value) {
           rememberFocus();
           loadReview().then(recomputeStats).catch(toastError);
+          focusFirstMenuItem('notif');
         } else if (wasOpen) {
           restoreFocus();
         }
@@ -674,10 +675,10 @@
       /** 关闭所有浮层。Esc 与点击外部都走这里，保证行为一致。 */
       function closeOverlays() {
         if (questionEditor.open) { closeQuestionEditor(); return; }
-        if (exportDialog.open) { exportDialog.open = false; return; }
-        if (previewImage.value) { previewImage.value = null; return; }
-        if (notifOpen.value) { notifOpen.value = false; return; }
-        if (userMenuOpen.value) { userMenuOpen.value = false; }
+        if (exportDialog.open) { exportDialog.open = false; restoreFocus(); return; }
+        if (previewImage.value) { previewImage.value = null; restoreFocus(); return; }
+        if (notifOpen.value) { closeNotif(); return; }
+        if (userMenuOpen.value) { closeUserMenu(); }
       }
 
       /**
@@ -736,9 +737,20 @@
 
       /** 严格模式下给 aria-live 区域播报一句话。 */
       function announce(text) {
+        if (!text) { return; }
+        // 清空再赋值：内容相同的两次播报读屏不会重复朗读
         liveMessage.value = '';
         nextTick(function () { liveMessage.value = text; });
       }
+
+      /**
+       * 草稿恢复提示出现时也播报一次（ui-design 8：状态变更用 aria-live）。
+       * 提示条本身有 role="status"，但它常常在页面加载瞬间就出现，
+       * 读屏可能错过，所以再走一遍统一的播报区。
+       */
+      watch(function () { return draftPrompt.show; }, function (show) {
+        if (show) { announce('检测到未提交的草稿，可选择恢复或丢弃'); }
+      });
 
       /**
        * 全局键盘：Esc 关闭浮层、Tab 在弹窗内循环、方向键切题。
@@ -796,9 +808,132 @@
             && (target.closest('.notif') || target.closest('.dropdown'))) {
           return;   // 点在面板/菜单自身或其触发按钮上，交给各自的 @click 处理
         }
-        notifOpen.value = false;
-        userMenuOpen.value = false;
+        // 走 closeNotif/closeUserMenu 而不是直接改标志位：
+        // 这样右键、中键点击外部关闭时也会把焦点还给触发按钮。
+        if (notifOpen.value) { closeNotif(); }
+        if (userMenuOpen.value) { closeUserMenu(); }
       }
+
+      /* ---------------- 下拉/面板的键盘导航（ui-design 8）--------------- */
+
+      /** 菜单里可聚焦的项：显式 role=menuitem 的优先，其次通用可聚焦元素。 */
+      var EXPLICIT_MENU_ITEMS = '[role="menuitem"]';
+      var GENERIC_FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), '
+        + 'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+      /** 当前打开的菜单容器（通知面板或用户菜单）。 */
+      function activeMenuEl() {
+        if (notifOpen.value) { return document.getElementById('notif-panel'); }
+        if (userMenuOpen.value) { return document.getElementById('user-menu'); }
+        return null;
+      }
+
+      /**
+       * 菜单项列表。
+       *
+       * 通知面板里**只有标题行**是菜单项：面板展开复习视图后，里面还有
+       * 打勾/上一题/下一题等按钮，若把它们也算进 ↑/↓ 的移动范围，
+       * 方向键就会在按钮之间乱跳，与"↑/↓ 在菜单项之间移动"的预期不符。
+       * 那些按钮本身是原生 button，Tab 可达、Enter/Space 可触发，无需额外处理。
+       */
+      function menuItems(container) {
+        if (!container) { return []; }
+        var explicit = Array.prototype.filter.call(
+          container.querySelectorAll(EXPLICIT_MENU_ITEMS),
+          function (el) { return !el.disabled; });
+        if (explicit.length) { return explicit; }
+        return Array.prototype.filter.call(
+          container.querySelectorAll(GENERIC_FOCUSABLE),
+          function (el) { return !el.disabled; });
+      }
+
+      /**
+       * 菜单键盘：↑/↓/Home/End 移动焦点，Esc 关闭并把焦点还给触发按钮。
+       *
+       * 返回 false 表示按键没被处理（例如 review_queue 为空时，
+       * 方向键应当去处理"复习页卡片滚动"这个别的语义），由全局处理器接手。
+       */
+      function onMenuKeydown(event, kind) {
+        var container = document.getElementById(
+          kind === 'notif' ? 'notif-panel' : 'user-menu');
+        if (!container) { return false; }
+        var items = menuItems(container);
+        if (!items.length) { return false; }
+
+        var key = event.key;
+        if (key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          if (kind === 'notif') { closeNotif(); } else { closeUserMenu(); }
+          return true;
+        }
+        if (key !== 'ArrowDown' && key !== 'ArrowUp'
+            && key !== 'Home' && key !== 'End') {
+          // Enter/Space 交给元素自身（原生 button 会触发 click）
+          return false;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        var current = items.indexOf(document.activeElement);
+        var next;
+        if (key === 'Home') {
+          next = 0;
+        } else if (key === 'End') {
+          next = items.length - 1;
+        } else if (current === -1) {
+          next = key === 'ArrowDown' ? 0 : items.length - 1;
+        } else {
+          next = current + (key === 'ArrowDown' ? 1 : -1);
+          // 循环：到底再按回到另一端，符合菜单的常见预期
+          if (next < 0) { next = items.length - 1; }
+          if (next >= items.length) { next = 0; }
+        }
+        items[next].focus();
+        return true;
+      }
+
+      /** 打开菜单后把焦点放进第一项（否则 ↑/↓ 没有起点）。 */
+      function focusFirstMenuItem(kind) {
+        nextTick(function () {
+          var container = document.getElementById(
+            kind === 'notif' ? 'notif-panel' : 'user-menu');
+          var items = menuItems(container);
+          if (items.length) { items[0].focus(); }
+        });
+      }
+
+      function closeNotif() {
+        notifOpen.value = false;
+        restoreFocus();
+      }
+
+      function closeUserMenu() {
+        userMenuOpen.value = false;
+        restoreFocus();
+      }
+
+      function toggleUserMenu() {
+        var wasOpen = userMenuOpen.value;
+        userMenuOpen.value = !userMenuOpen.value;
+        notifOpen.value = false;
+        if (userMenuOpen.value) {
+          rememberFocus();
+          focusFirstMenuItem('user');
+        } else if (wasOpen) {
+          restoreFocus();
+        }
+      }
+
+      /* ---------------- 弹窗打开时锁背景滚动（ui-design 8）--------------- */
+
+      function updateScrollLock(locked) {
+        document.body.style.overflow = locked ? 'hidden' : '';
+      }
+
+      // 三类弹窗任一打开即锁滚动。用 watch 而不是散落在各 open/close 里，
+      // 避免将来新增弹窗时漏掉其中一条路径（Esc / 遮罩 / 按钮都要还原）。
+      watch(modalIsOpen, updateScrollLock);
 
       /** 复习页按 ←/→ 滚动到上/下一张卡片。 */
       function stepReviewCard(delta) {
@@ -1015,8 +1150,11 @@
             lastNoteSavedAt = Date.now();
             tickSavedAt();
             loadDraftKeyList();
+            // 走统一的 aria-live 播报区（见 announce 的注释）
+            announce('笔记草稿已自动保存');
           } else {
             draftStatusText.value = '草稿保存失败（存储不可用）';
+            announce('草稿保存失败，存储不可用');
           }
         }, DRAFT_DEBOUNCE_MS);
       }
@@ -1364,6 +1502,10 @@
         toggleSidebar: toggleSidebar,
         isMobile: isMobile,
         liveMessage: liveMessage,
+        onMenuKeydown: onMenuKeydown,
+        toggleUserMenu: toggleUserMenu,
+        closeNotif: closeNotif,
+        closeUserMenu: closeUserMenu,
         toggleFolder: toggleFolder,
         selectFolder: selectFolder,
         promptNewSubject: promptNewSubject,

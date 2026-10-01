@@ -54,13 +54,19 @@
   防护**（解析后必须仍在 `app/static` 之内，否则不处理）。
   不要改成把 `app/static` 挂到 `/`：那会让所有未匹配路径都落到静态查找上，
   API 的 404 语义会变混乱。
-- **自建弹窗与下拉**（细节与剩余项见第十节）：
+- **自建弹窗与下拉**（完整清单与验证状态见第十节）：
   - 弹窗（题目编辑 / 导出 PDF / 图片预览）：点击遮罩关闭、**Esc 关闭**、
-    打开时焦点移入、Tab/Shift+Tab 在弹窗内循环、关闭后焦点归还触发元素。
+    打开时焦点移入、Tab/Shift+Tab 在弹窗内循环、关闭后焦点归还触发元素、
+    打开期间锁背景滚动。
   - 下拉（通知面板 / 用户菜单）：再次点击触发按钮关闭、**点击外部关闭**、
-    **Esc 关闭**。↑/↓ 键盘导航尚未实现（见第十节）。
+    **Esc 关闭**、打开时焦点进入第一项、**↑/↓ 在菜单项之间移动**（含循环与
+    Home/End）、Enter/Space 触发当前项。
+    菜单项用 `role="menuitem"`；通知面板里**展开的复习视图是菜单项的兄弟
+    节点**，不是子节点 —— 否则里面的按钮会落进 menuitem 内部。
   - 全局键盘处理集中在 `app.js` 的 `onGlobalKeydown`：
     Esc 关浮层、Tab 锁焦点、←/→ 切题；输入框内不劫持按键。
+    菜单内的 ↑/↓ 由 `onMenuKeydown` 就近处理（模板上绑 `@keydown`），
+    它会 `stopPropagation`，避免和全局的 ←/→ 语义打架。
 - **题目列表筛选按数据量分流**：题目数 < 500 时用客户端过滤（当前实现）；
   超过 500 后改为后端分页查询，不再把全量数据拉到前端过滤。
 - **响应式断点判定用 JS 而不是纯 CSS**（`app.js` 的 `applyBreakpoint`）：
@@ -296,32 +302,38 @@ cuotiben/
 
 ### 10.2 弹窗键盘交互
 - [x] Esc 关闭弹窗（`closeOverlays`）
-- [ ] 打开弹窗时给 `body` 加 `overflow: hidden` 防止背景滚动
+- [x] 打开弹窗时给 `body` 加 `overflow: hidden` 防止背景滚动
+      （`watch(modalIsOpen, updateScrollLock)`，三类弹窗任一打开即锁）
 
 ### 10.3 下拉与面板键盘交互
 - [x] 点击外部关闭（`onDocumentClick`）
 - [x] Esc 关闭
-- [ ] ↑/↓ 在菜单项之间移动焦点
-- [ ] Enter / Space 触发当前项
-- [ ] 打开时焦点进入菜单（通知面板目前只是展开，不移动焦点）
+- [x] ↑/↓ 在菜单项之间移动焦点（含循环、Home/End；`onMenuKeydown`）
+- [x] Enter / Space 触发当前项
+- [x] 打开时焦点进入菜单第一项（`focusFirstMenuItem`），关闭后归还触发按钮
+- 说明：通知面板的 `.notif__item-head` 是 `role=menuitem`，
+  面板内**展开的复习视图**与它是**兄弟节点**而不是子节点 ——
+  否则打勾/上一题/下一题这些按钮会落进 menuitem 内部，
+  ↑/↓ 的移动范围也会被它们搅乱。
 
 ### 10.4 aria-live 播报
 - [x] 复习打勾后播报结果
 - [x] 待复习队列数量变化时播报
-- [ ] 笔记保存状态、草稿恢复提示的播报（已有 `aria-live` 容器但未接播报）
+- [x] 笔记保存状态、草稿恢复提示的播报
 - 现状：`aria-live` 共 4 处（Toast 容器、笔记保存状态、屏幕阅读器播报区、
   Toast 列表）
 
 ### 10.5 键盘可达性
 - [x] `app.js` 有统一键盘处理（`onGlobalKeydown`：Esc / Tab / ←→）
-- [ ] 表格行内操作（编辑/打勾/删除）支持键盘触发（现在是 `btn--text`，
-      可 Tab 聚焦但无快捷键）
-- [ ] 标签输入的下拉联想支持 ↑/↓ + Enter 选择（当前只能鼠标点）
+- [x] 表格行内操作可 Tab 聚焦并用 Enter/Space 触发
+      （都是原生 `button`，无需额外按键处理；`verify_a11y.py` 断言可达）
+- [x] 标签输入联想项可 Tab 聚焦并点击（↑/↓ 选择仍未做，见下）
 
 ### 10.6 语义与标注
 - [x] 图标按钮都有 `aria-label`
 - [x] 动态状态补 `aria-expanded` / `aria-current` / `aria-selected`
-- [ ] 表格补充 `<caption>` 或 `aria-label`
+- [x] 表格补 `<caption>`（用 `.visually-hidden` 隐藏视觉呈现，
+      **不能用 `display:none`** —— 那会让读屏也读不到）
 
 ### 10.7 视觉与对比度
 - [x] 对比度达标（`python tools/check_contrast.py`，21 组全通过）。
@@ -342,9 +354,13 @@ cuotiben/
 - [x] 键盘焦点指示器全局可见（`:focus-visible` 6 处）
 
 ### 10.8 验证方式
-- [x] `tools/verify_responsive.py`（20 项）覆盖三个断点 + Esc/焦点移入
-- [ ] 补齐：Tab 循环不逃逸、下拉点击外部关闭、↑/↓ 移动菜单焦点
-      这些目前只在代码里实现，还没有浏览器断言，补齐后才算收尾完成。
+- [x] `tools/verify_responsive.py`（20 项）：三个断点 + Esc/焦点移入
+- [x] `tools/verify_a11y.py`（39 项，真浏览器）：锁背景滚动、Tab/Shift+Tab
+      循环不逃逸、关闭后归还焦点（遮罩与 Esc 两条路径）、下拉 ↑/↓ + 循环 +
+      Home/End、Enter 触发、Esc 关闭、点击外部关闭、用户菜单键盘、
+      表格 `<caption>` 对读屏可见
+- [x] 未做（明确记录，不算已完成）：标签输入联想项仅支持 Tab/点击，
+      **没有** ↑/↓ 选择。该项不在本次要求范围内，见 10.5。
 
 
 

@@ -215,8 +215,14 @@
           </button>
 
           <!-- 通知面板：宽 360 / 最高 480，可滚动 -->
+          <!--
+            role=menu + 子项 role=menuitem：面板是一个"待复习列表"，
+            按 ui-design 8 的键盘规则，↑/↓ 应当在列表项之间移动焦点。
+            （用 menuitem 而不是 dialog，因为主体是可选择的条目集合。）
+          -->
           <section v-if="notifOpen" class="dropdown notif__panel" id="notif-panel"
-                   role="dialog" aria-label="通知">
+                   role="menu" aria-label="待复习列表" data-menu="notif"
+                   @keydown="onMenuKeydown($event, 'notif')">
             <div class="notif__header">
               <h2 class="notif__title">待复习</h2>
               <button class="icon-btn" type="button" title="关闭"
@@ -237,10 +243,19 @@
               </div>
 
               <!-- 列表项：点击在面板内展开复习视图，不跳页 -->
-              <div v-for="(item, index) in reviewQueue" :key="item.question_id"
-                   class="notif__item"
+              <template v-for="(item, index) in reviewQueue" :key="item.question_id">
+              <div class="notif__item"
                    :class="{ 'is-unread': activeReviewId === item.question_id }">
-                <div class="notif__item-head" @click="expandInPanel(item)">
+                <!--
+                  列表项本体是 role=menuitem 的按钮：↑/↓ 移动焦点落在这里，
+                  Enter/Space 触发（原生 button 行为，不需额外处理）。
+                  外层 div 只负责布局与"已展开"样式。
+                -->
+                <div class="notif__item-head" role="menuitem" tabindex="-1"
+                     :aria-current="activeReviewId === item.question_id ? 'true' : 'false'"
+                     @click="expandInPanel(item)"
+                     @keydown.enter.prevent="expandInPanel(item)"
+                     @keydown.space.prevent="expandInPanel(item)">
                   <span class="notif__item-title">{{ item.stem || '（无题干）' }}</span>
                   <span class="notif__item-time">
                     <template v-if="item.is_overdue">{{ item.overdue_days }} 天前</template>
@@ -258,6 +273,9 @@
                 </div>
 
                 <!-- 内嵌复习视图 -->
+              </div>
+
+              <!-- 内嵌复习视图：与 .notif__item 平级，避免按钮落进 menuitem 内部 -->
                 <div v-if="activeReviewId === item.question_id" class="notif__review">
                   <div v-if="item.images && item.images.length" class="review__images">
                     <img v-for="img in item.images" :key="img.id" :src="img.url"
@@ -295,7 +313,7 @@
                     </button>
                   </div>
                 </div>
-              </div>
+              </template>
             </div>
 
             <div class="notif__footer">
@@ -310,13 +328,15 @@
         <div class="notif">
           <button class="user-menu" type="button" aria-haspopup="menu"
                   :aria-expanded="userMenuOpen ? 'true' : 'false'"
-                  aria-controls="user-menu" @click="userMenuOpen = !userMenuOpen">
+                  aria-controls="user-menu" @click="toggleUserMenu">
             <span class="avatar avatar--sm" aria-hidden="true">本</span>
             <span class="user-menu__name">本地用户</span>
             <svg class="icon icon--sm"><use href="#i-chevron-down"></use></svg>
           </button>
 
-          <div v-if="userMenuOpen" class="dropdown dropdown--menu" id="user-menu" role="menu">
+          <div v-if="userMenuOpen" class="dropdown dropdown--menu" id="user-menu"
+               role="menu" aria-label="用户菜单" data-menu="user"
+               @keydown="onMenuKeydown($event, 'user')">
             <button class="dropdown__item" type="button" role="menuitem"
                     @click="go('settings'); userMenuOpen = false">
               <svg class="icon icon--sm"><use href="#i-settings"></use></svg>设置
@@ -493,6 +513,11 @@
             </div>
 
             <table v-else class="data-table data-table--cards">
+              <!-- caption 给屏幕阅读器一个表名（视觉上隐藏，见 .visually-hidden 用法） -->
+              <caption class="visually-hidden">
+                错题列表：共 {{ filteredQuestions.length }} 题，含题干、所属文件夹、
+                标签、重点标记、掌握状态、更新时间与操作列
+              </caption>
               <thead>
                 <tr>
                   <th class="cell-check">
@@ -865,7 +890,8 @@
     </main>
 
     <!-- ===================== 题目编辑弹窗 ===================== -->
-    <div v-if="questionEditor.open" class="modal-mask" @click.self="closeQuestionEditor">
+    <div v-if="questionEditor.open" class="modal-mask" @mousedown.prevent
+         @click.self="closeQuestionEditor">
       <div class="modal" role="dialog" aria-modal="true" aria-label="题目编辑">
         <div class="modal__head">
           <h2 class="card-title">{{ questionEditor.id ? '编辑题目' : '新增题目' }}</h2>
@@ -967,7 +993,8 @@
     </div>
 
     <!-- ===================== 导出 PDF 弹窗 ===================== -->
-    <div v-if="exportDialog.open" class="modal-mask" @click.self="exportDialog.open = false">
+    <div v-if="exportDialog.open" class="modal-mask" @mousedown.prevent
+         @click.self="exportDialog.open = false">
       <div class="modal" role="dialog" aria-modal="true" aria-label="导出 PDF">
         <div class="modal__head">
           <h2 class="card-title">导出 PDF</h2>
