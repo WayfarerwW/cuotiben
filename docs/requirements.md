@@ -556,8 +556,8 @@ GET	/notes	列表
 `GET /notes` 响应字段（按 `updated_at` 倒序）：
 `id`、`title`、`content`、`question_id`、`updated_at`
 
-- 列表返回 `content` 本身，但超过 200 字会截断并追加省略号（列表只用于预览）；
-  详情始终返回完整内容。
+列表返回 `content` 字段，超过 200 字截断加省略号。需要完整内容请调 `GET /notes/{id}`。
+
 - `title` 与 `content` 都可空（允许先建空笔记再写）。
 
 方法	路径	说明
@@ -582,6 +582,9 @@ DELETE	/notes/{id}	删除
 - `PUT` 只更新请求体里出现的字段；传 `null` 或空串表示清空该字段。
   编辑会自动刷新 `updated_at`。
 - `DELETE` 为软删除（置 `deleted_at`），记录保留在库中。
+
+PUT 接口用 Pydantic 的 `model_fields_set` 区分"未传字段"和"传了 null"。
+未传则保持原值，传 null 则清空。此规则适用于 notes、questions 等所有 PUT 接口。
 
 4.7 导出
 方法	路径	说明
