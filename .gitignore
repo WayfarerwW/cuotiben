@@ -1,18 +1,28 @@
+# --- 环境与虚拟环境 ---
 .env
+.venv/
 __pycache__/
 *.pyc
-.venv/
 node_modules/
 
-# PoC / 验证脚本的运行产物（可随时重新生成，不入库）
+# --- PoC / 验证脚本的运行产物（可随时重新生成，不入库）---
 poc_out/
 
-# SQLite 数据库与备份产物（数据不入库）
+# --- 数据目录 ---
+# 只忽略数据库文件本身，**保留目录**（靠 data/.gitkeep 占位），
+# 这样首次 clone 下来目录结构就是完整的，不需要手动建。
 data/*.db
 data/*.db-journal
-backups/*.db
-backups/*.zip
+data/*.db-wal
+data/*.db-shm
+!data/.gitkeep
 
-# 上传的图片（用户数据，不入库；保留目录占位）
+# --- 上传的图片（用户数据，不入库；保留目录占位）---
 uploads/*
 !uploads/.gitkeep
+
+# --- 备份产物（不入库；保留目录占位）---
+# 用 catch-all 而不是逐个扩展名：备份目录里的东西都是可再生成的产物，
+# 新增其它格式时不必回来改这里（之前只忽略 *.db/*.zip，其它文件会被误入库）。
+backups/*
+!backups/.gitkeep
