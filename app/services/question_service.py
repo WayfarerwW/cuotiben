@@ -18,6 +18,8 @@ from sqlalchemy import Select, false, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from ..models import (
+    IMAGE_KIND_STEM,
+    IMAGE_KINDS,
     MASTERY_MASTERED,
     MASTERY_STILL_WRONG,
     Folder,
@@ -227,12 +229,16 @@ def register_image(
     height: int | None = None,
     size: int | None = None,
     sort_order: int = 0,
+    kind: str = IMAGE_KIND_STEM,
 ) -> QuestionImage:
     """为刚上传的图片落一条 question_images 记录，返回该记录。
 
     DELETE /upload/image/{id} 需要 question_images 主键，所以上传时就先建行
-    （此时还没有 question_id）。前端录题时把 url 放进 questions.images，
-    _sync_images 会按路径找到这一行并复用，不会产生重复记录。
+    （此时还没有 question_id）。前端录题时把 url+kind 放进 questions.images，
+    _sync_images 会按 (路径, 位置) 找到这一行并复用，不会产生重复记录。
+
+    `kind` 允许在上传时就指定位置；若不指定则默认题干图，
+    录题时 _sync_images 会按最终传入的 kind 覆盖它（同一张图换位置是合法的）。
 
     这里不 commit，由调用方控制事务（上传接口自己 commit）。
     """
@@ -243,6 +249,7 @@ def register_image(
         height=height,
         size=size,
         sort_order=sort_order,
+        kind=kind if kind in IMAGE_KINDS else IMAGE_KIND_STEM,
     )
     db.add(image)
     db.commit()
@@ -261,58 +268,99 @@ def _normalize_image_key(raw: str) -> str:
     ).as_posix()
 
 
-def _sync_images(db: Session, question: Question, urls: list[str]) -> None:
-    """按传入的 URL 数组重建该题图片列表（保序去重）。
+#: 同一张图不能既当题干图又当答案图？其实可以（同一张图两面都用是合理的），
+#: 所以去重键是 (路径, 位置) 而不是只有路径。见 _sync_images。
+ImageRef = tuple[str, str]
+
+
+def _image_in_refs(ref: object) -> ImageRef | None:
+    """把入参归一化成 (路径, 位置)。兼容旧的裸字符串写法（当作题干图）。"""
+    if ref is None:
+        return None
+    if isinstance(ref, str):
+        kind = IMAGE_KIND_STEM
+        raw = ref
+    elif isinstance(ref, dict):
+        raw = ref.get("url") or ref.get("file_path") or ""
+        kind = ref.get("kind") or IMAGE_KIND_STEM
+    else:
+        # pydantic 模型（QuestionImageIn）
+        raw = getattr(ref, "url", "") or getattr(ref, "file_path", "")
+        kind = getattr(ref, "kind", None) or IMAGE_KIND_STEM
+
+    text = str(raw).strip()
+    if not text:
+        return None
+    key = _normalize_image_key(text)
+    if not key:
+        return None
+    if kind not in IMAGE_KINDS:
+        kind = IMAGE_KIND_STEM
+    return (key, str(kind))
+
+
+def _sync_images(db: Session, question: Question, refs: list) -> None:
+    """按传入的图片列表重建该题图片（保序去重）。
+
+    去重键是 **(路径, 位置)**：同一张图可以既作题干图又作答案图，
+    按路径去重会把其中一面悄悄丢掉。
+
+    排序在每个位置内**各自从 0 开始**，这样题干图的顺序不会因为
+    答案图的存在而跳号（复习视图与 PDF 各自按 sort_order 渲染）。
 
     优先复用已存在的 question_images 行：
       - 本题已挂的（编辑场景）
       - 上传接口刚建好、还没挂题的孤儿行（register_image 产生）
     """
-    existing = {_normalize_image_key(img.file_path): img for img in question.images}
-    used: set[str] = set()
+    existing: dict[ImageRef, QuestionImage] = {
+        (_normalize_image_key(img.file_path), img.kind or IMAGE_KIND_STEM): img
+        for img in question.images
+    }
+    used: set[ImageRef] = set()
     result: list[QuestionImage] = []
+    counters: dict[str, int] = {}
 
-    for index, raw in enumerate(urls):
-        if raw is None:
+    for raw in refs:
+        ref = _image_in_refs(raw)
+        if ref is None or ref in used:
             continue
-        text = str(raw).strip()
-        if not text:
-            continue
-        key = _normalize_image_key(text)
-        if not key or key in used:
-            continue
-        used.add(key)
+        used.add(ref)
+        path, kind = ref
+        order = counters.get(kind, 0)
+        counters[kind] = order + 1
 
-        image = existing.get(key)
+        image = existing.get(ref)
         if image is None:
-            # 找上传时先建好的孤儿行，复用它而不是再插一条
+            # 找上传时先建好的孤儿行（同一路径、尚未挂题），复用它而不是再插一条
             image = db.scalars(
                 select(QuestionImage).where(
                     QuestionImage.question_id.is_(None),
-                    QuestionImage.file_path == key,
+                    QuestionImage.file_path == path,
                 )
             ).first()
         if image is None:
-            width, height, size = _image_metadata(key)
+            width, height, size = _image_metadata(path)
             image = QuestionImage(
                 question_id=question.id,
-                file_path=key,
+                file_path=path,
                 width=width,
                 height=height,
                 size=size,
-                sort_order=index,
+                sort_order=order,
+                kind=kind,
             )
             db.add(image)
         else:
             image.question_id = question.id
-            image.sort_order = index
+            image.sort_order = order
+            image.kind = kind
         result.append(image)
 
     # 不在新列表里的旧图片只解除本题关联，不删记录也不删文件：
     # 那条记录可能被上传接口返回的 id 引用着，也可能还有别的题在用。
     # 真正删除走 DELETE /upload/image/{id}。
-    for key, image in existing.items():
-        if key not in used:
+    for ref, image in existing.items():
+        if ref not in used:
             image.question_id = None
 
     question.images = result  # type: ignore[assignment]

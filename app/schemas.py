@@ -114,7 +114,40 @@ class QuestionImageOut(OrmBase):
     height: int | None
     size: int | None
     sort_order: int
+    #: 'stem' = 题干图，'answer' = 答案图（requirements 3.3）
+    kind: str = "stem"
+    #: 可直接放进 <img src> 的地址（`/uploads/...`）。
+    #:
+    #: 为什么派生一个：`file_path` 是**库内相对路径**（`uploads/2026/...`，
+    #: 不带前导斜杠），前端若直接塞进 src，在首页(/)上凑巧能加载，
+    #: 换到任何子路径就 404 —— 这种问题本地手测极难发现。
+    #: 在服务端统一算好，前端各处就不必各自猜前缀。
+    url: str = ""
     created_at: datetime
+
+    @model_validator(mode="after")
+    def _fill_url(self) -> QuestionImageOut:
+        """按 file_path 算出可访问 URL（服务端单点实现，前端不用猜前缀）。"""
+        if not self.url:
+            from .services.image_service import url_for
+
+            self.url = url_for(self.file_path)
+        return self
+
+
+class QuestionImageIn(BaseModel):
+    """题目图片入参：位置 + 路径。
+
+    `url` 用上传接口返回的 file_path（如 /uploads/2026/10/01/x.jpg）。
+    `kind` 决定这张图渲染在题干还是答案里。
+
+    以前这里是裸字符串数组，无法表达图片属于哪一面 ——
+    需求 2.3 说"题干和答案允许为空（纯图片题目）"，答案侧同样要能放图，
+    所以入参必须带上位置信息。
+    """
+
+    url: str = Field(min_length=1, max_length=500)
+    kind: Literal["stem", "answer"] = "stem"
 
 
 class QuestionCreate(BaseModel):
@@ -127,8 +160,9 @@ class QuestionCreate(BaseModel):
     sort_order: int = 0
     # 标签名列表；服务端负责归一化 + 复用或新建（requirements.md 5.4）
     tags: list[str] = Field(default_factory=list)
-    # 图片 URL 数组（上传接口尚未实现，先接受路径/URL；取不到元数据则留空）
-    images: list[str] = Field(default_factory=list)
+    # 图片列表：[{url, kind}]，kind='stem' 题干图 / 'answer' 答案图。
+    # 老写法（裸 URL 数组）不再接受 —— 契约里必须有位置信息，见 QuestionImageIn。
+    images: list[QuestionImageIn] = Field(default_factory=list)
 
 
 class QuestionUpdate(BaseModel):
@@ -153,7 +187,7 @@ class QuestionUpdate(BaseModel):
     mastery_status: MasteryStatus | None = None
     sort_order: int | None = None
     tags: list[str] | None = None
-    images: list[str] | None = None
+    images: list[QuestionImageIn] | None = None
 
     @field_validator("folder_id", "is_starred", "mastery_status", "sort_order",
                      "tags", "images")

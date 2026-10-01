@@ -287,8 +287,8 @@
               <!-- 内嵌复习视图：与 .notif__item 平级，避免按钮落进 menuitem 内部 -->
                 <div v-if="activeReviewId === item.question_id" class="notif__review">
                   <div v-if="item.images && item.images.length" class="review__images">
-                    <img v-for="img in item.images" :key="img.id" :src="img.url"
-                         :alt="'题目图片'" @click="previewImage = img.url">
+                    <img v-for="img in item.images" :key="img.id" :src="imageUrl(img.file_path)"
+                         :alt="'题目图片'" @click="previewImage = imageUrl(img.file_path)">
                   </div>
                   <p v-if="item.stem" class="review__stem">{{ item.stem }}</p>
 
@@ -641,8 +641,8 @@
               </div>
 
               <div v-if="item.images && item.images.length" class="review__images">
-                <img v-for="img in item.images" :key="img.id" :src="img.url"
-                     alt="题目图片" @click="previewImage = img.url">
+                <img v-for="img in item.images" :key="img.id" :src="imageUrl(img.file_path)"
+                     alt="题目图片" @click="previewImage = imageUrl(img.file_path)">
               </div>
 
               <p class="review__stem">{{ item.stem || '（无题干）' }}</p>
@@ -981,6 +981,28 @@
                       v-model="questionForm.stem"
                       placeholder="可留空（纯图片题目）"
                       @input="onQuestionEdit"></textarea>
+            <!-- 题干图 -->
+            <div class="img-field">
+              <button class="btn btn--secondary btn--sm" type="button"
+                      :disabled="imageUploading > 0"
+                      @click="$refs.stemFile.click()">
+                <svg class="icon icon--sm"><use href="#i-plus"></use></svg>
+                {{ imageUploading > 0 ? '上传中…' : '插入图片' }}
+              </button>
+              <span class="text-aux">支持 JPG / PNG / WebP / HEIC，单张 ≤10MB</span>
+              <input ref="stemFile" class="visually-hidden" type="file"
+                     accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                     multiple aria-label="为题干选择图片"
+                     @change="onPickImages($event, 'stem')">
+            </div>
+            <ul v-if="imagesOf('stem').length" class="img-list">
+              <li v-for="img in imagesOf('stem')" :key="'stem-' + img.url" class="img-item">
+                <img :src="imageUrl(img.url)" alt="题干配图">
+                <button class="img-item__remove" type="button"
+                        :aria-label="'移除题干图片'"
+                        @click="removeQuestionImage('stem', img.url)">×</button>
+              </li>
+            </ul>
           </div>
 
           <div class="form-row form-row--block">
@@ -989,7 +1011,34 @@
                       v-model="questionForm.answer"
                       placeholder="可留空"
                       @input="onQuestionEdit"></textarea>
+            <!-- 答案图 -->
+            <div class="img-field">
+              <button class="btn btn--secondary btn--sm" type="button"
+                      :disabled="imageUploading > 0"
+                      @click="$refs.answerFile.click()">
+                <svg class="icon icon--sm"><use href="#i-plus"></use></svg>
+                {{ imageUploading > 0 ? '上传中…' : '插入图片' }}
+              </button>
+              <span class="text-aux">答案图会印在 PDF 的答案页上</span>
+              <input ref="answerFile" class="visually-hidden" type="file"
+                     accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                     multiple aria-label="为答案选择图片"
+                     @change="onPickImages($event, 'answer')">
+            </div>
+            <ul v-if="imagesOf('answer').length" class="img-list">
+              <li v-for="img in imagesOf('answer')" :key="'answer-' + img.url" class="img-item">
+                <img :src="imageUrl(img.url)" alt="答案配图">
+                <button class="img-item__remove" type="button"
+                        :aria-label="'移除答案图片'"
+                        @click="removeQuestionImage('answer', img.url)">×</button>
+              </li>
+            </ul>
           </div>
+
+          <!-- 上传失败要逐条说清楚，不然用户不知道哪张没进去 -->
+          <p v-if="imageErrors.length" role="alert" class="form-row__hint">
+            以下图片上传失败：{{ imageErrors.join('；') }}
+          </p>
 
           <div class="form-row form-row--block">
             <label class="form-row__label" for="q-tags">标签（回车创建）</label>

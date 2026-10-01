@@ -1852,6 +1852,63 @@ pre,
   color: var(--c-warning-text);
   font-size: var(--fs-aux);
 }
+
+/* --- 题目图片（题干图 / 答案图）--- */
+.img-field {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-tight);
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.img-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-tight);
+  margin-top: 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.img-item {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+  background: var(--c-hover-bg);
+}
+
+.img-item img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 移除按钮压在缩略图右上角，始终可见（不靠 hover，触屏没有 hover） */
+.img-item__remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--c-danger-fill);
+  color: #FFFFFF;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.img-item__remove:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 2px;
+}
 .form-row--block .input { max-width: none; }
 
 .settings-actions {

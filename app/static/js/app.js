@@ -223,7 +223,18 @@
       var questionEditor = reactive({ open: false, id: null, draftNotice: '' });
       var questionForm = reactive({
         id: null, folder_id: null, stem: '', answer: '', tags: [], is_starred: false,
+        /**
+         * 题目图片：[{ url, kind }]，kind 为 'stem'（题干图）或 'answer'（答案图）。
+         *
+         * 以前只存 url 数组，无法表达图片属于哪一面 —— 而需求 2.3 明确
+         * "题干和答案都允许为空（纯图片题目）"，答案侧同样要能放图。
+         */
+        images: [],
       });
+      /** 正在上传的图片数量（>0 时显示"上传中"并禁用保存，避免半截状态入库）。 */
+      var imageUploading = ref(0);
+      /** 上传失败的提示（逐条列出，不要只弹 toast 就丢）。 */
+      var imageErrors = ref([]);
       var questionSaving = ref(false);
       var questionDraftStatus = ref('');
       var tagDraft = ref('');
@@ -1154,6 +1165,12 @@
         questionForm.answer = q ? (q.answer || '') : '';
         questionForm.tags = q ? (q.tags || []).map(function (t) { return t.name; }) : [];
         questionForm.is_starred = q ? !!q.is_starred : false;
+        questionForm.images = q
+          ? (q.images || []).map(function (img) {
+              return { url: imageUrl(img.file_path), kind: img.kind || 'stem' };
+            })
+          : [];
+        imageErrors.value = [];
         tagDraft.value = '';
         tagSuggestions.value = [];
         rememberFocus();
@@ -1206,6 +1223,74 @@
         questionEditor.draftNotice = '';
         questionDraftStatus.value = '草稿已丢弃';
         loadDraftKeyList();
+      }
+
+      /* ---------------- 题目图片（题干图 / 答案图）---------------- */
+
+      /**
+       * 把任意写法的图片路径规范成可直接放进 `src` 的 URL。
+       *
+       * 后端有**两种**写法，混用会出问题：
+       *   - `file_path`：库内相对路径 `uploads/2026/10/01/x.jpg`（不带前导斜杠）
+       *   - `url`      ：可访问地址   `/uploads/2026/10/01/x.jpg`
+       * 直接把 file_path 塞进 `src`，在首页(/)上凑巧能加载，但换到任何
+       * 子路径就会 404 —— 而这种问题在本地手测时极难发现。
+       *
+       * 所以渲染前一律过一遍这里，缺前导斜杠就补上。
+       */
+      function imageUrl(path) {
+        var text = String(path || '').replace(/\\/g, '/').trim();
+        if (!text) { return ''; }
+        if (/^(https?:)?\/\//.test(text) || text.indexOf('data:') === 0) {
+          return text;                       // 外链或 data URL 原样返回
+        }
+        if (text.charAt(0) !== '/') { text = '/' + text; }
+        return text;
+      }
+
+      /** 取某个位置的图片（'stem' / 'answer'）。 */
+      function imagesOf(kind) {
+        return questionForm.images.filter(function (i) { return i.kind === kind; });
+      }
+
+      /**
+       * 处理 <input type="file"> 的选择：逐张上传，成功后追加到对应位置。
+       *
+       * 为什么允许多选、并且**逐张独立**上传：一张失败不该把其余几张一起废掉；
+       * 每张上传成功就立刻进 images 数组，用户能马上看到缩略图。
+       */
+      function onPickImages(event, kind) {
+        var input = event.target;
+        var files = Array.prototype.slice.call(input.files || []);
+        input.value = '';                        // 允许连续选同一个文件
+        if (!files.length) { return; }
+        imageErrors.value = [];
+
+        files.forEach(function (file) {
+          imageUploading.value += 1;
+          API.uploadImage(file)
+            .then(function (res) {
+              if (!res || !res.file_path) {
+                throw new Error('上传接口未返回 file_path');
+              }
+              questionForm.images.push({ url: imageUrl(res.file_path), kind: kind });
+              onQuestionEdit();
+            })
+            .catch(function (err) {
+              var name = file && file.name ? file.name : '（未命名）';
+              imageErrors.value.push(name + '：' +
+                (err && err.message ? err.message : '上传失败'));
+            })
+            .then(function () { imageUploading.value -= 1; });
+        });
+      }
+
+      /** 从表单里移除一张图（只解除关联；物理文件删除走 DELETE /upload/image）。 */
+      function removeQuestionImage(kind, url) {
+        questionForm.images = questionForm.images.filter(function (i) {
+          return !(i.kind === kind && i.url === url);
+        });
+        onQuestionEdit();
       }
 
       function addTag() {
@@ -1354,6 +1439,10 @@
           toast('请先选择所属大类', 'warning', true);
           return;
         }
+        if (imageUploading.value > 0) {
+          toast('图片还在上传，请稍候', 'warning', true);
+          return;
+        }
         questionSaving.value = true;
         var payload = {
           folder_id: questionForm.folder_id,
@@ -1361,6 +1450,10 @@
           answer: questionForm.answer === '' ? null : questionForm.answer,
           tags: questionForm.tags,
           is_starred: questionForm.is_starred,
+          // 契约是 [{url, kind}]，不是裸 URL 数组（requirements 3.3）
+          images: questionForm.images.map(function (i) {
+            return { url: i.url, kind: i.kind };
+          }),
         };
         var p = questionEditor.id
           ? API.updateQuestion(questionEditor.id, payload)
@@ -1379,6 +1472,8 @@
             questionForm.stem = '';
             questionForm.answer = '';
             questionForm.tags = [];
+            questionForm.images = [];
+            imageErrors.value = [];
             questionEditor.draftNotice = '';
           } else {
             closeQuestionEditor();
@@ -1803,6 +1898,12 @@
         closeUserMenu: closeUserMenu,
         toggleFolder: toggleFolder,
         selectFolder: selectFolder,
+        onPickImages: onPickImages,
+        removeQuestionImage: removeQuestionImage,
+        imagesOf: imagesOf,
+        imageUrl: imageUrl,
+        imageUploading: imageUploading,
+        imageErrors: imageErrors,
         promptNewSubject: promptNewSubject,
         promptNewCategory: promptNewCategory,
         newCategoryFromEditor: newCategoryFromEditor,

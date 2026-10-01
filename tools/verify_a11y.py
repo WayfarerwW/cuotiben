@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -363,11 +364,44 @@ function blob(el) {
     const firstItem = d.querySelector('.notif__item-head');
     c('面板内有列表项', !!firstItem);
     if (firstItem) {
+      /* 前面第 6 段已经用 Enter 展开过复习视图，且面板重新打开后
+         activeReviewId 仍指着它 —— 此时再 click 同项等于**切换关闭**。
+         所以先确保它是关的，再点开，否则断言会打在"刚好被关掉"的状态上。 */
+      if (d.querySelector('.notif__review')) {
+        firstItem.click();
+        await wait(900);
+      }
       firstItem.click();
       // 等复习视图真的渲染出来（.notif__review 是 v-if 控制的）
       const review = await until(() => d.querySelector('.notif__review'), 4000);
       c('点列表项后展开复习视图', !!review,
         review ? 'ok' : ('aria-current=' + firstItem.getAttribute('aria-current')));
+
+      /* 复习视图里的图片 src 必须是可用地址。
+         后端 QuestionImageOut.file_path 是**库内相对路径**
+         （`uploads/2026/...`，不带前导斜杠），模板若直接塞进 src，
+         在首页(/)上凑巧能加载、换到子路径就 404；写成 img.url
+         （某些来源下没有这个字段）则会是 undefined。
+         用 until 等图片真的渲染出来，别只等 .notif__review ——
+         那个容器先出现，里面的 img 是随后才有的。 */
+      await until(() => d.querySelector('.review__images img'), 4000);
+      const revImgs = Array.from(d.querySelectorAll('.review__images img'));
+      c('诊断 复习视图现场', true, JSON.stringify({
+        itemText: (firstItem.textContent || '').trim().slice(0, 30),
+        reviewHtml: (d.querySelector('.notif__review') || {}).innerHTML
+          ? d.querySelector('.notif__review').innerHTML.replace(/\s+/g, ' ').slice(0, 200)
+          : '(无 review)',
+        anyReviewImages: d.querySelectorAll('.review__images').length,
+        allImgs: Array.from(d.querySelectorAll('img')).length,
+      }));
+      c('复习视图渲染出了题目图片', revImgs.length >= 1, revImgs.length + ' 张');
+      c('复习视图图片 src 是 /uploads/… 绝对路径',
+        revImgs.length > 0 && revImgs.every(el => /^\/uploads\//.test(el.getAttribute('src') || '')),
+        revImgs.map(el => el.getAttribute('src')).join(' | ') || '-');
+      c('复习视图没有 src="undefined"',
+        !d.body.innerHTML.includes('src="undefined"'),
+        (d.body.innerHTML.match(/src="undefined"/g) || []).length);
+
       const checkBtn = Array.from(d.querySelectorAll('button'))
         .find(b => b.textContent.trim() === '打勾');
       c('面板内有打勾按钮', !!checkBtn,
@@ -714,8 +748,44 @@ def call(method: str, path: str, payload: dict | None = None, timeout: float = 3
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
+def _tiny_jpeg() -> bytes:
+    """最小的合法 JPEG（1x1）—— 用于给题目挂一张真图。
+
+    内嵌 base64 而不是依赖测试目录里有图片文件：自检要能独立跑。
+    """
+    import base64
+
+    return base64.b64decode(
+        "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8U"
+        "HRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA"
+        "/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQA"
+        "AAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJico"
+        "KSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKT"
+        "lJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo"
+        "6erx8vP09fb3+Pn6/9oACAEBAAA/APn+v//Z")
+
+
+def _post_multipart(path: str, filename: str, data: bytes,
+                    content_type: str) -> tuple[int, str]:
+    """发一个 multipart/form-data 请求（图片上传接口用）。"""
+    boundary = "----cuotibena11y"
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+        f"Content-Type: {content_type}\r\n\r\n"
+    ).encode("utf-8") + data + f"\r\n--{boundary}--\r\n".encode("utf-8")
+    req = urllib.request.Request(
+        BASE + path, data=body, method="POST",
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.status, resp.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8", "replace")
+
+
 def seed() -> int:
-    """造数据：一个学科 + 一个大类 + 三道题。
+    """造数据：一个学科 + 一个大类 + 三道题（其中一道带题干图）。
 
     测试服务器本身**不会**造数据（它只提供 /__redue 这类改库接口），
     所以这里自己发 API 请求 —— 第一版没造数据，通知面板一个菜单项都没有，
@@ -727,6 +797,17 @@ def seed() -> int:
                          {"name": "极限与连续", "parent_id": subject})
     leaf = json.loads(body)["id"]
 
+    # 先上传一张图拿到 file_path，给第一道题挂上：
+    # 通知栏复习视图里会真的渲染 <img>，才能验证 src 是可用地址。
+    image_path = ""
+    try:
+        status, up_body = _post_multipart(
+            "/upload/image", "tiny.jpg", _tiny_jpeg(), "image/jpeg")
+        if status in (200, 201):
+            image_path = json.loads(up_body).get("file_path", "")
+    except Exception:  # noqa: BLE001 - 上传失败不阻断其余用例
+        image_path = ""
+
     made = 0
     # 标签名刻意都带 "重要" 前缀：标签联想的键盘用例需要一个**多于 2 项**的
     # 候选列表，否则"移到第 2 项""边界循环"都退化成同一项、等于没测。
@@ -735,16 +816,20 @@ def seed() -> int:
         "洛必达法则的适用条件是什么",
         "求 y=x^3 的导数",
     ]):
-        _status, _body = call("POST", "/questions", {
+        payload = {
             "folder_id": leaf, "stem": stem,
             "answer": f"答案 {i + 1}",
             "tags": ["重要极限", "重要公式", "重要定义"][: i + 1],
             "is_starred": i == 0, "sort_order": i,
-        })
+        }
+        if i == 0 and image_path:
+            payload["images"] = [{"url": image_path, "kind": "stem"}]
+        _status, _body = call("POST", "/questions", payload)
         made += 1
 
     # 新题的首条记录到期时间是 now()+3 天，必须回拨才会进今日队列
     call("POST", "/__redue")
+    print(f"[seed] 图片 file_path={image_path or '（上传失败，复习视图不会有图）'}")
     return made
 
 

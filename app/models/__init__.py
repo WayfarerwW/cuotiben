@@ -21,7 +21,7 @@ from .base import Base, utcnow
 from .export_records import ExportRecord
 from .folders import LEVEL_CATEGORY, LEVEL_SUBJECT, Folder
 from .notes import Note
-from .question_images import QuestionImage
+from .question_images import IMAGE_KIND_ANSWER, IMAGE_KIND_STEM, IMAGE_KINDS, QuestionImage
 from .question_tags import question_tags
 from .questions import MASTERY_MASTERED, MASTERY_STILL_WRONG, Question
 from .review_records import ReviewRecord
@@ -56,6 +56,9 @@ __all__ = [
     "LEVEL_CATEGORY",
     "MASTERY_STILL_WRONG",
     "MASTERY_MASTERED",
+    "IMAGE_KIND_STEM",
+    "IMAGE_KIND_ANSWER",
+    "IMAGE_KINDS",
     "KEY_INTERVALS",
     "KEY_BACKFILL_LIMIT",
     "KEY_BACKFILL_RESET_DAYS",

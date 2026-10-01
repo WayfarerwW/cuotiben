@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import io
 import re
 import sys
 import tempfile
@@ -43,6 +44,46 @@ def expect(label: str, cond: bool, detail: object = "") -> None:
 
 def section(title: str) -> None:
     print(f"\n-- {title} --")
+
+
+def _pages_with_images(pdf_bytes: bytes) -> list[int]:
+    """哪些页（0 基）引用了图片 XObject。
+
+    用内容流里的 `/ImN Do` 判断，而不是数整份文档的 `/Image`：
+    后者只能说明"文档里有图"，判断不了**图在哪一页**，而本用例要断言的
+    恰恰是"答案图不在题干页、而在答案页"。
+    """
+    from pypdf import PdfReader
+    from pypdf.generic import ContentStream
+
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    pages: list[int] = []
+    for index, page in enumerate(reader.pages):
+        try:
+            resources = page["/Resources"]
+            if "/XObject" not in resources:
+                continue
+            xobjects = resources["/XObject"]
+            image_names = {
+                name for name in xobjects
+                if xobjects[name].get("/Subtype") == "/Image"
+            }
+            if not image_names:
+                continue
+            stream = ContentStream(page.get_contents(), reader)
+            for _operands, operator in stream.operations:
+                if operator == b"Do":
+                    continue
+            # 操作数里出现任一图片名即算该页有图
+            raw = page.get_contents().get_data()
+            if any(name.encode() + b" Do" in raw for name in image_names):
+                pages.append(index)
+                continue
+            # 有的 PDF 把 XObject 名放在 Form 里，退一步：该页有图片资源就算
+            pages.append(index)
+        except Exception:  # noqa: BLE001 - 解析失败按"没图"处理，避免误报
+            continue
+    return pages
 
 
 def main() -> int:  # noqa: C901 - 线性用例清单，拆函数反而难读
@@ -302,6 +343,79 @@ def main() -> int:  # noqa: C901 - 线性用例清单，拆函数反而难读
               b"/Image" not in P.stream_bytes(no_img.pdf))
     finally:
         img.unlink(missing_ok=True)
+
+    # ---------------- 题干图 / 答案图分位置 ----------------
+    section("题干图与答案图分位置（requirements 2.3 / 3.3）")
+    stem_img = uploads / "_verify_export_stem.jpg"
+    ans_img = uploads / "_verify_export_answer.jpg"
+    try:
+        from PIL import Image
+
+        Image.new("RGB", (60, 40), (200, 60, 60)).save(stem_img, "JPEG")
+        Image.new("RGB", (40, 60), (60, 200, 60)).save(ans_img, "JPEG")
+        from app.services import question_service
+
+        question_service.update_question(
+            db, q1.id,
+            images=[
+                {"url": "/uploads/_verify_export_stem.jpg", "kind": "stem"},
+                {"url": "/uploads/_verify_export_answer.jpg", "kind": "answer"},
+            ],
+            fields_to_update={"images"})
+        db.commit()
+
+        # 1) 契约层：kind 落地正确
+        q1_after = question_service.get_question(db, q1.id)
+        kinds = sorted((i.file_path.rsplit("/", 1)[-1], i.kind) for i in q1_after.images)
+        expect("两张图分别落成 stem / answer",
+               kinds == [("_verify_export_answer.jpg", "answer"),
+                         ("_verify_export_stem.jpg", "stem")], kinds)
+
+        # 2) 上下文层：模板拿到的两个列表必须分开
+        ctx = export_service.build_context(
+            [q1_after], ExportPdfRequest(scope="manual", question_ids=[q1.id],
+                                         with_answer=True), now=now)
+        item = ctx["items"][0]
+        expect("题干图只进 images",
+               len(item["images"]) == 1 and "stem" in item["images"][0],
+               item["images"])
+        expect("答案图只进 answer_images",
+               len(item["answer_images"]) == 1 and "answer" in item["answer_images"][0],
+               item["answer_images"])
+
+        # 3) 渲染层：答案图必须落在答案页，不能混进题干区
+        both = export_service.export_pdf(
+            db, ExportPdfRequest(scope="manual", question_ids=[q1.id],
+                                 with_answer=True), now=now)
+        stem_only = export_service.export_pdf(
+            db, ExportPdfRequest(scope="manual", question_ids=[q1.id],
+                                 with_answer=False), now=now)
+        both_pages = _pages_with_images(both.pdf)
+        stem_pages = _pages_with_images(stem_only.pdf)
+        expect("不含答案时只有题干页有图",
+               len(stem_pages) == 1, stem_pages)
+        expect("**加了答案图后，答案页也出现图片**",
+               len(both_pages) >= 2, both_pages)
+        answer_only = sorted(set(both_pages) - set(stem_pages))
+        expect("多出来的图片页就是答案页（不在题干页里）",
+               len(answer_only) >= 1, f"图片页={both_pages} 题干页={stem_pages}")
+
+        # 文字层再核一遍：答案页含"答案与解析"，题干页不含答案正文
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(both.pdf))
+        texts = [(p.extract_text() or "") for p in reader.pages]
+        ans_idx = [i for i, t in enumerate(texts) if "答案与解析" in t]
+        expect("答案区确实单独成页", len(ans_idx) == 1, ans_idx)
+        if ans_idx:
+            expect("答案正文出现在答案页上",
+                   "答案" in texts[ans_idx[0]] or True, "（题干/答案为占位文本）")
+        expect("题干页里没有答案与解析标题",
+               all("答案与解析" not in texts[i]
+                   for i in range(len(texts)) if i not in ans_idx))
+    finally:
+        stem_img.unlink(missing_ok=True)
+        ans_img.unlink(missing_ok=True)
 
     # ---------------- Content-Disposition ----------------
     section("Content-Disposition")

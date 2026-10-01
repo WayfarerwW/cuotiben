@@ -102,6 +102,17 @@
     border-radius: 2mm;
   }
 
+  /* 答案图：与题干图同样自适应，但出现在答案页里 */
+  .a__images { margin-top: 2mm; }
+  .a__images img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin-bottom: 2mm;
+    border: 1px solid #E2E8F6;
+    border-radius: 2mm;
+  }
+
   /* ---------------- 答案区 ---------------- */
   /*
     requirements.md 2.16「含答案时答案统一放末尾」：
@@ -187,6 +198,12 @@
       <div class="a">
         <div class="a__no">第 {{ item.no }} 题</div>
         <div class="a__body">{{ item.answer }}</div>
+        {# 答案图必须印在答案页上：印到题干下面等于提前把答案给了 #}
+        {% if item.answer_images %}
+          <div class="a__images">
+            {% for uri in item.answer_images %}<img src="{{ uri }}" alt="答案配图">{% endfor %}
+          </div>
+        {% endif %}
       </div>
     {% endfor %}
   </section>

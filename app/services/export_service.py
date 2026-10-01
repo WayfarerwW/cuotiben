@@ -22,6 +22,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sqlalchemy.orm import Session
 
+from ..models.question_images import IMAGE_KIND_ANSWER, IMAGE_KIND_STEM
 from ..models.questions import MASTERY_MASTERED, MASTERY_STILL_WRONG, Question
 from ..schemas import ExportScope, ExportPdfRequest
 from ..weasyprint_bootstrap import chinese_font_path, ensure_native_libs
@@ -230,10 +231,18 @@ def build_context(
     """把 ORM 对象映射成模板上下文（显式取值，不把 ORM 泄漏进模板）。"""
     items: list[dict[str, Any]] = []
     for index, q in enumerate(questions, start=1):
-        images = [
-            uri
-            for uri in (_image_uri(img.file_path) for img in sorted(
-                q.images, key=lambda i: (i.sort_order, i.id)))
+        # 题干图与答案图分开传给模板：答案区在 PDF 里另起一页
+        # （requirements 2.16 / 4.7），答案图片必须渲染在那一页，
+        # 不能混进题干区 —— 否则"含答案"的卷子会把答案截图印在题目下面。
+        ordered = sorted(q.images, key=lambda i: (i.sort_order, i.id))
+        stem_images = [
+            uri for uri in (_image_uri(i.file_path) for i in ordered
+                            if (i.kind or IMAGE_KIND_STEM) == IMAGE_KIND_STEM)
+            if uri
+        ]
+        answer_images = [
+            uri for uri in (_image_uri(i.file_path) for i in ordered
+                            if (i.kind or IMAGE_KIND_STEM) == IMAGE_KIND_ANSWER)
             if uri
         ]
         items.append({
@@ -241,7 +250,8 @@ def build_context(
             "stem": _strip_html(q.stem) or "（未填写题干）",
             "answer": _strip_html(q.answer) or "（未填写答案）",
             "tags": [t.name for t in sorted(q.tags, key=lambda t: t.name)],
-            "images": images,
+            "images": stem_images,
+            "answer_images": answer_images,
             "is_starred": bool(q.is_starred),
             "mastery": q.mastery_status,
             "mastery_label": MASTERY_LABELS.get(q.mastery_status, q.mastery_status),

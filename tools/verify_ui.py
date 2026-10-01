@@ -687,6 +687,201 @@ def run_category_entry_phase(target: str) -> list[dict]:
                  "detail": f"{type(exc).__name__}: {exc}"}]
 
 
+#: 第三阶段：题干/答案插图（requirements 2.3）。
+#:
+#: 这一段要真的走完"选文件 -> 上传 -> 缩略图 -> 保存 -> 重新打开还在"，
+#: 因为原来的缺陷就是**前端连上传控件都没有**：后端 POST /upload/image 和
+#: api.js 的 uploadImage() 都已实现，但 app.js 从未调用过 ——
+#: 只测接口的用例永远发现不了"界面上没有入口"。
+IMAGE_PHASE = r"""
+<script>
+const RESULTS = [];
+function check(name, ok, detail) {
+  RESULTS.push({ name, ok: !!ok, detail: detail === undefined ? '' : String(detail) });
+}
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+(async () => {
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'width:1440px;height:1100px;border:0';
+  document.body.appendChild(iframe);
+  await new Promise((resolve) => {
+    let settled = false;
+    const done = () => { if (!settled) { settled = true; resolve(); } };
+    iframe.onload = done;
+    iframe.src = window.__TARGET__ + '?nopoll=1';
+    setTimeout(done, 15000);
+  });
+  await wait(2500);
+  const doc = iframe.contentDocument;
+  const win = iframe.contentWindow;
+
+  /* ---- 前置：必须有一个大类，否则保存会被拦下 ---- */
+  const tree = await fetch('/folders/tree').then((r) => r.json());
+  let leaf = null;
+  for (const s of (tree || [])) { for (const c of (s.children || [])) { leaf = c; } }
+  if (!leaf) {
+    const s0 = (tree || [])[0];
+    if (s0) {
+      leaf = await fetch('/folders', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: '插图测试大类', parent_id: s0.id }) })
+        .then((r) => r.json());
+    }
+  }
+  check('前置：存在可用于录题的大类', !!leaf, leaf ? leaf.name : '无');
+
+  /* ---- 1. 弹窗里必须有文件输入与"插入图片"按钮 ---- */
+  const addBtn = Array.from(doc.querySelectorAll('button'))
+    .find((b) => b.textContent.trim().includes('新增题目'));
+  if (addBtn) { addBtn.click(); }
+  await wait(1500);
+
+  const fileInputs = Array.from(doc.querySelectorAll('input[type="file"]'));
+  check('题目弹窗里有文件选择控件', fileInputs.length >= 2, fileInputs.length);
+  const imgBtns = Array.from(doc.querySelectorAll('.img-field button'))
+    .filter((b) => b.textContent.includes('插入图片'));
+  check('题干与答案各有「插入图片」按钮', imgBtns.length >= 2, imgBtns.length);
+  check('文件控件接受 HEIC（需求 2.6）',
+    fileInputs.some((i) => (i.getAttribute('accept') || '').includes('heic')),
+    fileInputs[0] ? fileInputs[0].getAttribute('accept') : '-');
+
+  /* ---- 2. 造一张真 JPEG，走完上传链路 ---- */
+  const canvas = doc.createElement('canvas');
+  canvas.width = 40; canvas.height = 30;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#3366cc'; ctx.fillRect(0, 0, 40, 30);
+  const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.9));
+  const file = new win.File([blob], 'diag.jpg', { type: 'image/jpeg' });
+
+  const stemInput = fileInputs[0];
+  const dt = new win.DataTransfer();
+  dt.items.add(file);
+  stemInput.files = dt.files;
+  stemInput.dispatchEvent(new win.Event('change', { bubbles: true }));
+  await wait(4000);   // 等上传 + 压缩
+
+  const stemImgs = doc.querySelectorAll('.img-list img');
+  check('选文件后出现缩略图', stemImgs.length >= 1, stemImgs.length);
+  check('缩略图 src 指向上传结果',
+    stemImgs.length > 0 && /uploads\//.test(stemImgs[0].getAttribute('src') || ''),
+    stemImgs.length ? stemImgs[0].getAttribute('src') : '-');
+
+  /* ---- 3. 保存后用接口核对 kind 落对 ---- */
+  const sel = doc.getElementById('q-folder');
+  if (sel && leaf) {
+    sel.value = String(leaf.id);
+    sel.dispatchEvent(new win.Event('change', { bubbles: true }));
+    await wait(300);
+  }
+  const stemTa = doc.getElementById('q-stem');
+  const setter = Object.getOwnPropertyDescriptor(
+    win.HTMLTextAreaElement.prototype, 'value').set;
+  setter.call(stemTa, '带图题干');
+  stemTa.dispatchEvent(new win.Event('input', { bubbles: true }));
+  await wait(300);
+  const saveBtn = Array.from(doc.querySelectorAll('.modal button'))
+    .find((b) => /保存|创建/.test(b.textContent));
+  if (saveBtn) { saveBtn.click(); }
+  await wait(3000);
+
+  const qs = await fetch('/questions').then((r) => r.json());
+  const created = (qs || []).find((q) => q.stem === '带图题干');
+  check('带图题目保存成功', !!created, created ? ('id=' + created.id) : '未找到');
+  if (created) {
+    check('题干图的 kind 落成 stem',
+      created.images.some((i) => i.kind === 'stem'), JSON.stringify(created.images.map((i) => i.kind)));
+    check('上传的图确实挂在题目上',
+      created.images.length >= 1, created.images.length);
+
+    /* ---- 回归：渲染层不能出现 src="undefined" ----
+       QuestionImageOut 的字段是 file_path；模板里若写成 img.url 会得到
+       undefined，图片区渲染成空白、控制台还不报错，极易漏掉。
+       注意：题目表格**本来就不渲染缩略图**（题干预览只有文字），
+       所以这里只断言"没有 undefined"，不假装表格该有图；
+       真正渲染图片的是通知栏复习视图，那段在 verify_a11y 里验。 */
+    const closeBtn2 = Array.from(doc.querySelectorAll('.modal button'))
+      .find((b) => (b.getAttribute('aria-label') || '') === '关闭');
+    if (closeBtn2) { closeBtn2.click(); }
+    await wait(1500);
+
+    check('页面里没有 src="undefined"（后端字段名写错就会这样）',
+      !doc.body.innerHTML.includes('src="undefined"'),
+      (doc.body.innerHTML.match(/src="undefined"/g) || []).length);
+
+    /* 切到「题目管理」再断言：首页的列表受 currentFolderId / filterType
+       过滤，刚建的题不一定在其中 —— 在这里断言列表内容会变成 flaky。 */
+    const navQ = Array.from(doc.querySelectorAll('.nav__item'))
+      .find((n) => n.textContent.includes('题目管理'));
+    if (navQ) { navQ.click(); }
+    await wait(1800);
+    const rows = Array.from(doc.querySelectorAll('table tbody tr'));
+    check('保存后题目出现在题目列表里',
+      rows.some((tr) => tr.textContent.includes('带图题干')),
+      rows.length + ' 行');
+  }
+
+  /* ---- 4. 重新打开该题，缩略图应还在 ---- */
+  if (created) {
+    const editBtn = Array.from(doc.querySelectorAll('button'))
+      .find((b) => (b.getAttribute('aria-label') || '').includes('编辑'));
+    if (editBtn) {
+      editBtn.click();
+      await wait(2000);
+      const reopened = doc.querySelectorAll('.img-list img');
+      check('重新打开题目时缩略图仍在', reopened.length >= 1, reopened.length);
+      const closeBtn = Array.from(doc.querySelectorAll('.modal button'))
+        .find((b) => (b.getAttribute('aria-label') || '') === '关闭');
+      if (closeBtn) { closeBtn.click(); }
+    }
+  }
+
+  const pre = document.createElement('pre');
+  pre.id = 'img-results';
+  pre.textContent = JSON.stringify(RESULTS);
+  document.body.appendChild(pre);
+})().catch((e) => {
+  RESULTS.push({ name: '第三阶段运行无异常', ok: false,
+                 detail: (e && e.message ? e.message : String(e)) });
+  const pre = document.createElement('pre');
+  pre.id = 'img-results';
+  pre.textContent = JSON.stringify(RESULTS);
+  document.body.appendChild(pre);
+});
+</script>
+"""
+
+
+def run_image_phase(target: str) -> list[dict]:
+    """第三阶段：题干/答案插图（回归用）。"""
+    out_dir = Path.home() / "AppData/Local/Temp/cuotiben_uiharness"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    harness = out_dir / "img_harness.html"
+    harness.write_text(
+        '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">'
+        "<title>img-harness</title></head><body>"
+        + IMAGE_PHASE.replace("window.__TARGET__", json.dumps(target))
+        + "</body></html>", encoding="utf-8")
+    url = target.rstrip("/") + "/__harness3"
+    try:
+        proc = subprocess.run(
+            [EDGE, "--headless=new", "--disable-gpu", "--no-sandbox",
+             "--force-device-scale-factor=1", "--window-size=1500,1150",
+             "--virtual-time-budget=60000", "--dump-dom", url],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=300)
+        dom = proc.stdout or ""
+        m = re.search(r'<pre id="img-results">(.*?)</pre>', dom, re.S)
+        if not m:
+            return [{"name": "第三阶段（插图）取到结果", "ok": False,
+                     "detail": "未取到 img-results；DOM 尾部：" + dom[-400:]}]
+        raw = (m.group(1).replace("&quot;", '"').replace("&amp;", "&")
+               .replace("&lt;", "<").replace("&gt;", ">"))
+        return json.loads(raw)
+    except Exception as exc:  # noqa: BLE001
+        return [{"name": "第三阶段（插图）运行", "ok": False,
+                 "detail": f"{type(exc).__name__}: {exc}"}]
+
+
 def main() -> int:
     target = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8941/"
     db_arg = sys.argv[2] if len(sys.argv) > 2 else None
@@ -749,6 +944,7 @@ def main() -> int:
     # 而第一阶段依赖已有大类来录题。放在同一个 iframe 里会把它的
     # 前置数据破坏掉。
     results += run_category_entry_phase(target)
+    results += run_image_phase(target)
 
     passed = [r for r in results if r["ok"]]
     failed = [r for r in results if not r["ok"]]

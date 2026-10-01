@@ -86,12 +86,65 @@ def get_db() -> Iterator[Session]:
 get_session = get_db
 
 
-def init_db(target_engine: Engine | None = None) -> None:
-    """建表（幂等）。
+def init_db(target_engine: Engine | None = None) -> list[str]:
+    """建表（幂等），然后跑一遍轻量迁移。
 
     必须先 import app.models 把所有模型注册进 Base.metadata，
     否则 create_all 会漏建表。
+
+    返回本次实际执行的迁移（空列表 = 库是最新的），供启动日志打印。
     """
     import app.models  # noqa: F401  （注册全部模型）
 
-    Base.metadata.create_all(bind=target_engine or engine)
+    engine_ = target_engine or engine
+    Base.metadata.create_all(bind=engine_)
+    return run_light_migrations(engine_)
+
+
+#: 轻量迁移：给**已存在**的表补列。
+#:
+#: 为什么需要它：`create_all` 只建缺失的**表**，绝不会给已存在的表加列。
+#: 用户的 data/cuotiben.db 是长期保留的，所以加字段后必须显式 ALTER，
+#: 否则升级后所有查询都会报 "no such column"。
+#:
+#: 项目约定是"迁移留口子"（AGENTS.md 七）：这里只做**幂等、可自动完成**的
+#: 加列，遇到需要搬数据/改约束的复杂迁移再引入 Alembic。
+#: 每条 `(表, 列, 类型, 默认值)`：列不存在才 ALTER，因此可反复执行。
+LIGHT_MIGRATIONS: tuple[tuple[str, str, str, str], ...] = (
+    # question_images.kind：区分题干图 / 答案图（requirements 3.3）。
+    # 默认 stem —— 加字段之前只存在一种位置，老数据的语义就是题干图。
+    ("question_images", "kind", "VARCHAR(16)", "stem"),
+)
+
+
+def run_light_migrations(target_engine: Engine | None = None) -> list[str]:
+    """执行 LIGHT_MIGRATIONS，返回本次实际做的改动（供启动日志）。"""
+    from sqlalchemy import inspect, text
+
+    engine_ = target_engine or engine
+    applied: list[str] = []
+    inspector = inspect(engine_)
+    existing_tables = set(inspector.get_table_names())
+
+    for table, column, coltype, default in LIGHT_MIGRATIONS:
+        if table not in existing_tables:
+            continue                      # 新库由 create_all 直接建好，不用迁移
+        columns = {c["name"] for c in inspector.get_columns(table)}
+        if column in columns:
+            continue                      # 幂等：已经有了就跳过
+        with engine_.begin() as conn:
+            quoted_default = f"'{default}'"
+            conn.execute(text(
+                f"ALTER TABLE {table} ADD COLUMN {column} {coltype} "
+                f"NOT NULL DEFAULT {quoted_default}"
+            ))
+            # 显式回填一次：SQLite 的 ADD COLUMN DEFAULT 会给已有行填上，
+            # 但不能假设所有后端都如此（将来换 PostgreSQL 时这条更保险）。
+            conn.execute(text(
+                f"UPDATE {table} SET {column} = :d WHERE {column} IS NULL"
+            ), {"d": default})
+        applied.append(f"{table}.{column}={default}")
+        # 表结构变了，重建 inspector 以便后续条目看到最新列
+        inspector = inspect(engine_)
+
+    return applied

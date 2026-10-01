@@ -189,6 +189,15 @@ async function until(fn, timeout) {
             await Response("no cat_harness.html", status_code=404)(scope, receive, send)
             return
 
+        # 第三份：verify_ui 第三阶段（题干/答案插图）
+        if path == "/__harness3":
+            alt = harness_path.parent / "img_harness.html"
+            if alt.is_file():
+                await FileResponse(alt, media_type=MIME[".html"])(scope, receive, send)
+                return
+            await Response("no img_harness.html", status_code=404)(scope, receive, send)
+            return
+
         # 供截图用：加载首页并自动点开通知面板（面板内嵌复习视图）
         if path == "/__notif":
             await Response(notif_shot, media_type=MIME[".html"])(scope, receive, send)

@@ -41,8 +41,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     #    方便临时覆盖而不改文件。
     load_dotenv(PROJECT_ROOT / ".env")
 
-    # 1. 建表（init_db 内部会 import app.models 注册全部模型）
-    init_db()
+    # 1. 建表并跑轻量迁移。init_db 内部先 create_all 再 run_light_migrations，
+    #    顺序不能反：新库要先有表，老库才轮得到补列。
+    #    返回值是本次实际做的改动，用于启动日志（没改动就是空列表）。
+    for change in init_db():
+        print(f"[startup] 已迁移 {change}")
 
     # 2. 初始化 settings 默认值（幂等，不覆盖用户配置）
     with SessionLocal() as db:

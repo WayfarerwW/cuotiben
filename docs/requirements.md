@@ -320,8 +320,17 @@ original_path	VARCHAR	原图路径（可选）
 width	INTEGER	宽
 height	INTEGER	高
 size	INTEGER	字节
-sort_order	INTEGER	排序
+sort_order	INTEGER	排序（在每个 kind 内各自从 0 开始）
+kind	VARCHAR	'stem'=题干图 / 'answer'=答案图，默认 'stem'
 created_at	DATETIME	创建
+
+`kind` 的必要性：2.3 说"题干和答案允许为空（纯图片题目）"，
+说明答案侧同样要能放图；没有这个字段就无法表达图片属于哪一面。
+`sort_order` 在各自 `kind` 内独立编号，这样题干图的顺序不会因为
+答案图的存在而跳号。
+同一张图**可以**同时作为题干图与答案图（去重键是 `(file_path, kind)`
+而不是只有路径）。
+
 3.4 tags
 字段	类型	说明
 id	INTEGER PK	主键
@@ -426,6 +435,12 @@ GET	/questions/{id}	详情
 `images`、`tags`、`next_review_at`、`interval_index`、`review_count`
 
 - `images` 是对象数组（`question_images` 记录），不是 URL 字符串数组。
+- 每个 `images` 元素含 `kind`，取值 `'stem'`（题干图）或 `'answer'`（答案图）。
+  **入参同样是对象数组**：`[{"url": "/uploads/...", "kind": "stem"}]`，
+  不再是裸 URL 字符串数组 —— 契约里必须有位置信息，否则无法表达答案图。
+- 每个元素还含派生字段 `url`（`/uploads/...`，可直接放进 `<img src>`）。
+  `file_path` 是**库内相对路径**（不带前导斜杠），前端若直接当 src 用，
+  在首页(/)上凑巧能加载、换到子路径就 404，因此在服务端统一算好 `url`。
 - `next_review_at` / `interval_index` / `review_count` 取自该题"当前生效"的
   review_record（未软删除里最新一条），由服务端推导，不直接存在 questions 表。
 - `folder_name` 便于列表直接显示所属大类，避免前端再查一次文件夹。
@@ -512,6 +527,16 @@ GET /tags -> [
 方法	路径	说明
 POST	/upload/image	上传压缩
 DELETE	/upload/image/{id}	删除
+
+`POST /upload/image` 响应字段：
+`id`、`url`、`file_path`、`width`、`height`、`size`、`fell_back_to_original`
+
+- `file_path` 是**库内相对路径**（`uploads/2026/10/01/x.jpg`，不带前导斜杠），
+  入库用；`url` 是可直接访问的地址（`/uploads/...`），前端渲染用。
+- 上传时就先落一条 `question_images`（此时 `question_id` 为空），
+  因为 `DELETE /upload/image/{id}` 需要主键；录题时 `_sync_images`
+  按 `(路径, kind)` 复用该行，不会产生重复记录。
+
 4.5 复习
 
 方法	路径	说明
