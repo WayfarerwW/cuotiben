@@ -39,6 +39,43 @@
   --c-text-muted: #718096;       /* 次要文字：描述、辅助说明、时间戳 */
   --c-text-faint: #A0AEC0;       /* 辅助文字：占位符、禁用状态 */
 
+  /*
+    语义色的"文字专用"变体（AGENTS.md 10.7 / ui-design 8 的用法规则）。
+
+    为什么需要它们：2.1 给的 success/warning/danger 是对**填充色**调的，
+    直接当文字用达不到 4.5:1 —— 实测 #68D391 对白底 1.86:1、
+    #F6AD55 1.90:1、#FC8181 2.44:1、#4A7CDB 4.04:1。
+    用法规则：
+      - --c-success/--c-warning/--c-danger：**只做填充、边框、图标**
+        （非文字信息）。当填充色用时与白字搭配满足 4.5:1。
+      - --c-*-text：任何**文字**用这些。数值经 tools/check_contrast.py 校验。
+  */
+  --c-primary-text: #3D6BC4;     /* 4.78:1 on #FFFFFF */
+  --c-success-text: #2F855A;     /* 4.06:1 on #FFFFFF（已在用，tag--reward 同值）*/
+  --c-warning-text: #8A5A12;     /* 5.85:1 on #FFFFFF 与 --c-warning-soft */
+  --c-danger-text: #C53030;      /* 4.66:1 on #FFFFFF（已在用，tag--hard 同值）*/
+
+  /*
+    空状态正文色。不能用 --c-text-muted(#718096)：它对白底只有 4.02:1，不到 AA；
+    也不该直接用 --c-text(#2D3748)，那会让空状态文案抢过标题。
+    取一个介于两者之间的灰：5.49:1 on #FFFFFF、5.05:1 on #F5F7FA。
+  */
+  --c-text-empty: #5A6673;
+
+  /*
+    实色填充专用变体（白字压在上面时的底色）。
+
+    ui-design 2.1 的主色/危险色是较亮的调子，白字压上去只有 4.04:1 与 2.44:1，
+    达不到 AA。这种"白字 + 实色底"的组合靠用法规则救不了（白字必须落在底色上），
+    只能把**底色**略压深：
+      - --c-primary-fill #3E73D9：仅比 #4A7CDB 深约 5%，白字 4.51:1
+      - --c-danger-fill  #C53030：白字 4.66:1；它**就是**已有的 --c-danger-text，
+        即"同一语义只用一个色"，不会再出现"中间态浅红 / 悬停更浅"
+    2.1 的原色继续用于边框、图标、浅色底（--c-*-soft）等非文字场景。
+  */
+  --c-primary-fill: #3E73D9;
+  --c-danger-fill: #C53030;
+
   /* --- 派生色（文档未给，用于边框/分隔，保持同一色相）--- */
   --c-border: #E2E8F6;           /* 次要按钮边框（ui-design 5.1 明确给出） */
   --c-border-light: #EDF1F7;
@@ -169,7 +206,7 @@ ol {
 }
 
 a {
-  color: var(--c-primary);
+  color: var(--c-primary-text);
   text-decoration: none;
 }
 
@@ -227,10 +264,10 @@ pre,
 
 .text-muted { color: var(--c-text-muted); }
 .text-faint { color: var(--c-text-faint); }
-.text-success { color: var(--c-success); }
-.text-warning { color: var(--c-warning); }
-.text-danger { color: var(--c-danger); }
-.text-primary { color: var(--c-primary); }
+.text-success { color: var(--c-success-text); }
+.text-warning { color: var(--c-warning-text); }
+.text-danger { color: var(--c-danger-text); }
+.text-primary { color: var(--c-primary-text); }
 
 /* 屏幕阅读器专用 */
 .visually-hidden {
@@ -309,7 +346,7 @@ pre,
 
 /* 主要按钮：#4A7CDB 填充 + 白字 */
 .btn--primary {
-  background: var(--c-primary);
+  background: var(--c-primary-fill);
   color: #fff;
 }
 .btn--primary:hover { background: var(--c-primary-hover); }
@@ -326,7 +363,7 @@ pre,
 
 /* 危险按钮：#FC8181 填充 + 白字 */
 .btn--danger {
-  background: var(--c-danger);
+  background: var(--c-danger-fill);
   color: #fff;
 }
 .btn--danger:hover { filter: brightness(1.1); }
@@ -336,7 +373,7 @@ pre,
 .btn--text {
   height: auto;
   padding: 0;
-  color: var(--c-primary);
+  color: var(--c-primary-text);
   font-weight: var(--fw-regular);
 }
 .btn--text:hover { text-decoration: underline; }
@@ -431,7 +468,7 @@ pre,
 
 .input:disabled {
   background: var(--c-bg);
-  color: var(--c-text-faint);
+  color: var(--c-text-empty);
   cursor: not-allowed;
 }
 
@@ -444,7 +481,7 @@ pre,
   padding: 0 var(--sp-compact);
   border-radius: var(--radius-tag);
   background: var(--c-secondary-soft);
-  color: var(--c-secondary);
+  color: var(--c-primary-text);
   font-size: var(--fs-aux);
   font-weight: var(--fw-semibold);
   line-height: 1;
@@ -452,13 +489,13 @@ pre,
 }
 
 .tag--pill { border-radius: var(--radius-pill); }
-.tag--subject { background: var(--c-primary-soft); color: var(--c-primary); }
-.tag--star { background: var(--c-warning-soft); color: #B7791F; }
-.tag--hard { background: var(--c-danger-soft); color: #C53030; }
-.tag--pending { background: var(--c-primary-soft); color: var(--c-primary); }
-.tag--reviewed { background: #EDF2F7; color: var(--c-text-muted); }
-.tag--overdue { background: var(--c-danger-soft); color: #C53030; }
-.tag--backlog { background: var(--c-warning-soft); color: #B7791F; }
+.tag--subject { background: var(--c-primary-soft); color: var(--c-primary-text); }
+.tag--star { background: var(--c-warning-soft); color: var(--c-warning-text); }
+.tag--hard { background: var(--c-danger-soft); color: var(--c-danger-text); }
+.tag--pending { background: var(--c-primary-soft); color: var(--c-primary-text); }
+.tag--reviewed { background: #E6EAF0; color: var(--c-text); }
+.tag--overdue { background: var(--c-danger-soft); color: var(--c-danger-text); }
+.tag--backlog { background: var(--c-warning-soft); color: var(--c-warning-text); }
 
 /* --- 状态点（ui-design 5.3）--- */
 .status {
@@ -476,8 +513,8 @@ pre,
   flex: 0 0 auto;
 }
 
-.status--wrong { color: var(--c-danger); }
-.status--won { color: var(--c-success); }
+.status--wrong { color: var(--c-danger-text); }
+.status--won { color: var(--c-success-text); }
 
 /* --- 徽章 / 角标（ui-design 5.3）--- */
 .badge {
@@ -488,7 +525,7 @@ pre,
   height: 18px;
   padding: 0 5px;
   border-radius: var(--radius-pill);
-  background: var(--c-danger);
+  background: var(--c-danger-fill);
   color: #fff;
   font-family: var(--font-num);
   font-size: 11px;
@@ -496,7 +533,7 @@ pre,
   line-height: 1;
 }
 
-.badge--warning { background: var(--c-warning); }
+.badge--warning { background: var(--c-warning-text); }
 
 /* 仅红点：表示有新通知 */
 .dot {
@@ -519,7 +556,7 @@ pre,
   gap: var(--sp-tight);
   padding: 56px var(--sp-card);
   text-align: center;
-  color: var(--c-text-muted);
+  color: var(--c-text-empty);
 }
 
 .empty-state__art {
@@ -675,7 +712,7 @@ pre,
   padding: var(--sp-tight) var(--sp-card);
   background: var(--c-hover-bg);
   border-bottom: 1px solid var(--c-border-light);
-  color: var(--c-text-muted);
+  color: var(--c-text);
   font-size: var(--fs-aux);
   font-weight: var(--fw-semibold);
   text-align: left;
@@ -781,7 +818,7 @@ pre,
 }
 
 .nav__item.is-active {
-  background: var(--c-primary);
+  background: var(--c-primary-fill);
   color: var(--c-sidebar-text-active);
   font-weight: var(--fw-semibold);
 }
@@ -899,7 +936,7 @@ pre,
 }
 
 .context-menu__item:hover { background: var(--c-hover-bg); }
-.context-menu__item--danger { color: var(--c-danger); }
+.context-menu__item--danger { color: var(--c-danger-text); }
 
 /* --- 用户信息区（固定底部）--- */
 .sidebar__user {
@@ -946,7 +983,7 @@ pre,
   align-items: center;
   gap: 5px;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.62);
 }
 
 .sidebar__user-status .status__dot { background: var(--c-success); }
@@ -1006,7 +1043,7 @@ pre,
   border: 1px solid var(--c-border);
   border-radius: 4px;
   background: var(--c-surface);
-  color: var(--c-text-faint);
+  color: var(--c-text-empty);
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.4;
@@ -1095,7 +1132,7 @@ pre,
 }
 
 .dropdown__item:hover { background: var(--c-hover-bg); }
-.dropdown__item--danger { color: var(--c-danger); }
+.dropdown__item--danger { color: var(--c-danger-text); }
 
 .dropdown__divider {
   height: 1px;
@@ -1225,7 +1262,7 @@ pre,
   border-radius: var(--radius-card);
   background: var(--c-surface);
   padding: var(--sp-module);
-  color: var(--c-text-muted);
+  color: var(--c-text-empty);
   font-size: var(--fs-aux);
 }
 
@@ -1455,7 +1492,7 @@ pre,
 .segmented__item:hover { color: var(--c-text); }
 
 .segmented__item.is-active {
-  background: var(--c-primary);
+  background: var(--c-primary-fill);
   color: #fff;
   font-weight: var(--fw-semibold);
 }
@@ -2064,17 +2101,17 @@ pre,
 .review-rate:active { transform: scale(0.95); }
 
 /* 四档配色：完全不会(红) / 有点模糊(橙) / 基本掌握(蓝) / 已掌握(绿) */
-.review-rate--0 { background: var(--c-surface); border: 1px solid var(--c-danger); color: #C53030; }
-.review-rate--1 { background: var(--c-surface); border: 1px solid var(--c-warning); color: #B7791F; }
-.review-rate--2 { background: var(--c-surface); border: 1px solid var(--c-primary); color: var(--c-primary); }
-.review-rate--3 { background: var(--c-surface); border: 1px solid var(--c-success); color: #2F855A; }
+.review-rate--0 { background: var(--c-surface); border: 1px solid var(--c-danger); color: var(--c-danger-text); }
+.review-rate--1 { background: var(--c-surface); border: 1px solid var(--c-warning); color: var(--c-warning-text); }
+.review-rate--2 { background: var(--c-surface); border: 1px solid var(--c-primary); color: var(--c-primary-text); }
+.review-rate--3 { background: var(--c-surface); border: 1px solid var(--c-success); color: var(--c-success-text); }
 
 /* 选中态：背景填充 + 白字（点击后 200ms 内可见，随后自动切题） */
 .review-rate.is-picked { color: #fff; transform: scale(0.95); }
-.review-rate--0.is-picked { background: var(--c-danger); }
-.review-rate--1.is-picked { background: var(--c-warning); }
-.review-rate--2.is-picked { background: var(--c-primary); }
-.review-rate--3.is-picked { background: var(--c-success); }
+.review-rate--0.is-picked { background: var(--c-danger-fill); }
+.review-rate--1.is-picked { background: var(--c-warning-text); }
+.review-rate--2.is-picked { background: var(--c-primary-fill); }
+.review-rate--3.is-picked { background: var(--c-success-text); }
 
 /* --- 6.3 打勾：对勾绘制动画 + 行背景短暂高亮 --- */
 .check-mark {

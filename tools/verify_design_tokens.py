@@ -138,8 +138,11 @@ def main() -> int:
     check("折叠过渡 300ms ease-in-out",
           re.search(r"--dur-sidebar:\s*300ms", CSS) is not None
           and re.search(r"--ease-sidebar:\s*ease-in-out", CSS) is not None)
+    # 激活项背景用 --c-primary-fill（不是 2.1 原色 --c-primary）：
+    # 白字压在原色 #4A7CDB 上只有 4.04:1，不到 AA 4.5:1。
+    # 详见 AGENTS.md 10.7 / tools/check_contrast.py。
     check("激活项主色背景 + 白色文字",
-          re.search(r"\.nav__item\.is-active\s*\{[^}]*background:\s*var\(--c-primary\)",
+          re.search(r"\.nav__item\.is-active\s*\{[^}]*background:\s*var\(--c-primary-fill\)",
                     CSS, re.S) is not None
           and re.search(r"\.nav__item\.is-active\s*\{[^}]*color:\s*var\(--c-sidebar-text-active\)",
                         CSS, re.S) is not None)
@@ -201,18 +204,21 @@ def main() -> int:
 
     # ---------- 5.1 按钮 ----------
     print("\n-- 5.1 按钮 --")
-    check("主要按钮 #4A7CDB 填充 + 白字",
-          re.search(r"\.btn--primary\s*\{[^}]*background:\s*var\(--c-primary\)", CSS, re.S)
+    # 填充用的 token 见 AGENTS.md 10.7：白字 + 实色底这一组用法规避救不了，
+    # 只能把底色略压深；2.1 原色仍用于边框/图标（--c-border 等）。
+    check("主要按钮 主色填充 + 白字",
+          re.search(r"\.btn--primary\s*\{[^}]*background:\s*var\(--c-primary-fill\)", CSS, re.S)
           is not None
           and re.search(r"\.btn--primary\s*\{[^}]*color:\s*#fff", CSS, re.S) is not None)
     check("次要按钮 白底 + #E2E8F6 边框",
           re.search(r"\.btn--secondary\s*\{[^}]*border-color:\s*var\(--c-border\)", CSS, re.S)
           is not None and has_value("#E2E8F6"))
-    check("危险按钮 #FC8181 填充 + 白字",
-          re.search(r"\.btn--danger\s*\{[^}]*background:\s*var\(--c-danger\)", CSS, re.S)
+    check("危险按钮 危险色填充 + 白字",
+          re.search(r"\.btn--danger\s*\{[^}]*background:\s*var\(--c-danger-fill\)", CSS, re.S)
           is not None)
     check("文字按钮 无边框 + 主色文字",
-          re.search(r"\.btn--text\s*\{[^}]*color:\s*var\(--c-primary\)", CSS, re.S) is not None)
+          re.search(r"\.btn--text\s*\{[^}]*color:\s*var\(--c-primary-text\)", CSS, re.S)
+          is not None)
     check("图标按钮", re.search(r"\.icon-btn\s*\{", CSS) is not None)
     check("禁用态透明度 50%",
           re.search(r"\.btn:disabled[^{]*\{[^}]*opacity:\s*0\.5", CSS, re.S) is not None)

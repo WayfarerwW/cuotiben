@@ -150,6 +150,7 @@ chmod +x start.sh
 ```bash
 python tools/verify_launch.py          # 启动可访问性：run.py 起服务、静态资源无 404、Vue 挂载
 python tools/verify_responsive.py      # 响应式：三个断点 + Esc/焦点移入（真浏览器）
+python tools/check_contrast.py         # 对比度：文字×底色组合是否达 WCAG AA 4.5:1
 python tools/verify_db_schemas.py      # 数据库连接、建表、settings 默认值、Pydantic schema
 python tools/verify_models.py          # ORM 表结构、外键级联、datetime 往返
 python tools/verify_softdelete.py      # 软删除与部分唯一索引
