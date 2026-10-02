@@ -499,9 +499,9 @@
        *
        * **两步走，不直接带 force**：后端在"文件夹（或其子文件夹）下还有
        * 未删除题目"时会返回 409 拒绝删除，这是刻意的安全设计 ——
-       * 避免静默级联导致题目变成"挂在已删除文件夹上的孤儿"（界面消失了、
-       * 数据还在）。前端要**配合**它：先把后果告诉用户，确认后才带 force。
-       * 前端写死 force=true 等于把这个安全阀绕过去。
+       * 因为 force 会**连同这些题目一起软删除**（它们在界面上会消失），
+       * 必须由用户显式确认。前端要**配合**它：先把后果讲清楚，
+       * 确认后才带 force。前端写死 force=true 等于把这个安全阀绕过去。
        */
       function removeFolder(folder) {
         if (!folder) { return; }
@@ -513,17 +513,22 @@
         var count = folder.question_count || 0;
 
         var message = '要删除' + scope + '吗？';
-        // 这里不用 ** 之类的 markdown 记号：文案是纯文本渲染，星号会原样显示
+        // 文案是纯文本渲染（.confirm__detail 有 pre-line），不要用 markdown 记号，
+        // 星号会原样显示出来。
         var detail = count > 0
-          ? '它下面还有 ' + count + ' 道题。删除后这些题仍会保留，'
-            + '但不再属于任何大类。\n注意：删除后界面上无法恢复。'
+          ? '它下面还有 ' + count + ' 道题，这些题目会一起被删除。\n'
+            + '题目会进入「已删除」状态：数据库里仍保留，但界面上不再显示，'
+            + '题目列表与复习队列里都找不到。\n'
+            + '它们的图片会变成「无人引用」，可在'
+            + '「数据说明页 → 清理孤儿图片」回收。\n'
+            + '注意：删除后界面上无法恢复。'
           : '删除后界面上无法恢复。';
 
         askConfirm({
           title: '删除文件夹',
           message: message,
           detail: detail,
-          confirmLabel: '删除',
+          confirmLabel: count > 0 ? '连同题目一起删除' : '删除',
           danger: true,
         }).then(function (ok) {
           if (!ok) { return; }
@@ -534,14 +539,24 @@
       function doDeleteFolder(folder, force) {
         // deleteFolder(folderId, force:boolean, opts) —— 第二参是布尔
         API.deleteFolder(folder.id, force)
-          .then(function () {
-            toast('已删除「' + folder.name + '」');
+          .then(function (res) {
+            // 后端会报出"删了几个文件夹/几道题/几张图变成孤儿"，
+            // 直接转述，不要只说"已删除"。带图片时用 sticky 提示
+            // 多留一会儿，让用户看清"去清理图片"这句话。
+            var text = res && res.message
+              ? res.message
+              : ('已删除「' + folder.name + '」');
+            toast(text, 'success', !!(res && res.images));
             // 删掉的正是当前筛选的文件夹时，清掉筛选条件，
             // 否则题目列表会一直按一个已不存在的 id 过滤（看起来像"题全没了"）
             if (currentFolderId.value === folder.id) {
               currentFolderId.value = null;
             }
-            return Promise.all([loadFolderTree(), loadQuestions()]);
+            // 连带删了题目，所以复习队列与统计也要一起刷新 ——
+            // 否则"今日待复习"角标还挂着已经不存在的题。
+            return Promise.all([
+              loadFolderTree(), loadQuestions(), loadReview(), loadTags(),
+            ]).then(recomputeStats);
           })
           .catch(function (err) {
             if (err && err.status === 409) {
@@ -550,9 +565,11 @@
               askConfirm({
                 title: '还有题目挂在这个文件夹下',
                 message: '服务端报告它下面仍有题目。',
-                detail: '继续删除只会删掉文件夹本身，题目保持原状不动'
-                  + '（不删除、也不改所属）。\n删除后界面上无法恢复。',
-                confirmLabel: '仍然删除',
+                detail: '继续删除会连同这些题目一起软删除：'
+                  + '它们会进入「已删除」状态，界面上不再显示。\n'
+                  + '它们的图片可在「数据说明页 → 清理孤儿图片」回收。\n'
+                  + '注意：删除后界面上无法恢复。',
+                confirmLabel: '连同题目一起删除',
                 danger: true,
               }).then(function (again) {
                 if (again) { doDeleteFolder(folder, true); }

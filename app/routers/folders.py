@@ -11,7 +11,13 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import Folder
-from ..schemas import FolderCreate, FolderOut, FolderTree, FolderUpdate, MessageOut
+from ..schemas import (
+    FolderCreate,
+    FolderDeleteResult,
+    FolderOut,
+    FolderTree,
+    FolderUpdate,
+)
 from ..services import folder_service
 from ..services.folder_service import (
     DuplicateFolderNameError,
@@ -64,16 +70,33 @@ def update_folder(
     return FolderOut.model_validate(folder)
 
 
-@router.delete("/{folder_id}", response_model=MessageOut, summary="软删除文件夹")
+@router.delete("/{folder_id}", response_model=FolderDeleteResult,
+               summary="软删除文件夹（连同其下题目）")
 def delete_folder(
     folder_id: int,
-    force: bool = Query(False, description="文件夹下仍有题目时，是否仅删除文件夹本身"),
+    force: bool = Query(
+        False,
+        description="文件夹下仍有题目时，是否连同这些题目一起删除"
+        "（false 则拒绝并返回 409）"),
     db: Session = Depends(get_db),
-) -> MessageOut:
+) -> FolderDeleteResult:
     try:
-        affected = folder_service.delete_folder(db, folder_id, force=force)
+        info = folder_service.delete_folder(db, folder_id, force=force)
     except FolderNotFoundError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(e)) from e
     except InvalidFolderStructureError as e:
         raise HTTPException(status.HTTP_409_CONFLICT, str(e)) from e
-    return MessageOut(message=f"已软删除 {affected} 个文件夹")
+
+    # 把"删了什么、有多少图片变成孤儿"讲清楚：用户需要知道去清理图片
+    message = f"已删除 {info['folders']} 个文件夹"
+    if info["questions"]:
+        message += f"、{info['questions']} 道题目"
+    if info["images"]:
+        message += (f"；{info['images']} 张图片已无人引用，"
+                    "可在「数据说明页 → 清理孤儿图片」回收")
+    return FolderDeleteResult(
+        message=message,
+        folders=info["folders"],
+        questions=info["questions"],
+        images=info["images"],
+    )

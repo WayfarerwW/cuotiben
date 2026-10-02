@@ -43,6 +43,25 @@ class MessageOut(BaseModel):
     message: str | None = None
 
 
+class FolderDeleteResult(BaseModel):
+    """DELETE /folders/{id} 的结果（requirements.md 2.2）。
+
+    为什么不用 MessageOut：删除会**连带软删除其下题目**，用户必须能知道
+    到底删掉了多少东西、有多少图片因此变成孤儿。只回一句"已删除 N 个文件夹"
+    会把最需要用户注意的信息藏起来。
+
+    - `questions`：连带软删除的题目数
+    - `images`：这些题目原本挂着的图片数。它们**此刻变成了孤儿**
+      （没有任何未删除题目在引用），可用 `POST /upload/cleanup` 回收
+    """
+
+    ok: bool = True
+    message: str | None = None
+    folders: int = 0
+    questions: int = 0
+    images: int = 0
+
+
 class MasteryStatus(str, Enum):
     """错题正误状态（requirements.md 2.14）。"""
 

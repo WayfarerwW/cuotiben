@@ -760,10 +760,13 @@ def run_cases(cdp: CDP) -> int:  # noqa: C901
       const d = document.querySelector('.confirm__detail');
       return d ? d.textContent.trim() : 'NO_DETAIL';
     }})()""")
-    expect("有题时确认框说明了「题目会保留」",
-           "保留" in (dialog_text or ""), (dialog_text or "")[:60])
-    expect("确认框写明题目不再属于任何大类",
-           "大类" in (dialog_text or ""), (dialog_text or "")[:60])
+    # 语义已变更（requirements 2.2）：force 会**连同其下题目一起软删除**，
+    # 不再是"题目保持原状不动"。确认框必须把这件事说清楚 ——
+    # 否则用户以为只是删目录，结果题也没了。
+    expect("**确认框写明题目会一起被删除**",
+           "一起被删除" in (dialog_text or ""), (dialog_text or "")[:80])
+    expect("确认框提到图片可在「清理孤儿图片」回收",
+           "孤儿图片" in (dialog_text or ""), (dialog_text or "")[:80])
 
     # 取消掉，清理
     cdp.js("""(() => {

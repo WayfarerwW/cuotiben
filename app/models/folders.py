@@ -37,8 +37,17 @@ class Folder(PKMixin, CreatedAtMixin, SoftDeleteMixin, Base):
         back_populates="children", remote_side="Folder.id"
     )
 
-    # 题目用软删除，这里不设 ORM delete 级联，避免误触发物理删除
-    questions: Mapped[list["Question"]] = relationship(back_populates="folder")
+    # 题目用软删除，这里不设 ORM delete 级联，避免误触发物理删除。
+    #
+    # `passive_deletes=True` 是必须的：没有它时，只要 Folder 变化（哪怕只是
+    # 被软删除打时间戳），SQLAlchemy 的 unit-of-work 就会去"同步"这个集合，
+    # 对已载入的题目生成 `UPDATE questions SET folder_id = NULL` ——
+    # 而该列是 NOT NULL，会让**紧随其后的任意 commit** 抛 IntegrityError。
+    # 我们软删除题目走的是批量 UPDATE（见 folder_service.delete_folder），
+    # 不需要 ORM 帮忙维护外键。
+    questions: Mapped[list["Question"]] = relationship(
+        back_populates="folder", passive_deletes=True
+    )
 
     __table_args__ = (
         CheckConstraint("level IN (1, 2)", name="ck_folders_level"),

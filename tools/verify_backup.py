@@ -358,16 +358,22 @@ def main() -> int:  # noqa: C901 - 线性用例清单
     # ---------------------------------------------------------------
     section("不污染真实 backups/")
     # 这条守的是"自检绝不能往用户真实备份目录里写东西"。
-    # 允许目录里本来就有的合法内容（.gitkeep，以及用户自己跑过的
-    # 每日备份 cuotiben_*.db / uploads_* ），只拒绝**本自检产生的**其它文件。
+    # 允许目录里**本来就合法**的内容：
+    #   .gitkeep
+    #   cuotiben_{日期}.db        每日数据库备份
+    #   uploads_{日期}/           每日图片快照
+    #   {YYYYMMDD-HHMMSS}/        数据说明页「手动备份」产生的目录
+    # 只拒绝**本自检产生的**其它文件（例如 .tmp 残留、临时目录名）。
     real = PROJECT / "backups"
-    allowed = re.compile(r"^(\.gitkeep|cuotiben_\d{4}-\d{2}-\d{2}\.db"
-                         r"|uploads_\d{4}-\d{2}-\d{2})$")
+    allowed = re.compile(
+        r"^(\.gitkeep"
+        r"|cuotiben_\d{4}-\d{2}-\d{2}\.db"
+        r"|uploads_\d{4}-\d{2}-\d{2}"
+        r"|\d{8}-\d{6}(-\d+)?)$")
     real_entries = sorted(p.name for p in real.iterdir()) if real.is_dir() else []
     unexpected = [n for n in real_entries if not allowed.match(n)]
     expect("真实 backups/ 里没有自检产生的意外文件",
            not unexpected, unexpected)
-    # 还要确认临时目录的备份没有误落进来
     expect("真实 backups/ 里没有 .tmp 残留",
            not [n for n in real_entries if n.endswith(".tmp")],
            [n for n in real_entries if n.endswith(".tmp")])

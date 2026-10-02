@@ -237,8 +237,13 @@
         { method: 'PUT', body: data }, opts));
     },
     /**
-     * 软删除。文件夹下有题目时默认 409；
-     * 传 force=true 表示确认：只删文件夹，题目保持原状。
+     * 软删除文件夹。**会连同其下题目一起软删除**（requirements 2.2）。
+     *
+     * 文件夹下有未删除题目时默认 409 拒绝；传 `force=true` 表示已确认
+     * "这一整块都不要了"，此时连同这些题目一并软删除。
+     * 返回 `{ ok, message, folders, questions, images }` ——
+     * `images` 是"这些题挂了几张图"，它们此刻变成孤儿，
+     * 可用「数据说明页 → 清理孤儿图片」回收。
      */
     deleteFolder: function (folderId, force, opts) {
       return request('/folders/' + folderId, Object.assign(

@@ -5,7 +5,8 @@
   - 同一父下不允许同名（含软删除后可重建同名）
   - 不允许三级嵌套
   - 树结构与 question_count 正确
-  - 软删除：删学科连带子类；有题目时默认拒删，force=true 仅删文件夹
+  - 软删除：删学科连带子类；有题目时默认拒删，
+    force=true **连同其下题目一起软删除**（requirements 2.2）
   - service 抛业务异常（不抛 HTTPException）
 
 走临时数据库，不碰 data/cuotiben.db。
@@ -158,16 +159,27 @@ def main() -> int:
             expect_raises("有题目时删除 -> InvalidFolderStructureError",
                           (InvalidFolderStructureError,), svc.delete_folder, db, math.id)
 
-            affected = svc.delete_folder(db, math.id, force=True)
+            result = svc.delete_folder(db, math.id, force=True)
             # math 自身 + 两个大类（极限与洛必达、导数与微分）= 3
-            check("force=true 只删学科与其子类，题目保留", affected == 3,
-                  f"受影响 {affected} 个文件夹")
+            check("force=true 删学科与其子类，并返回结构化统计",
+                  result["folders"] == 3,
+                  f"受影响 {result['folders']} 个文件夹")
+            check("**force=true 连同其下题目一起软删除**",
+                  result["questions"] == 3,
+                  f"连带删除 {result['questions']} 道题（应 3："
+                  "该大类共 4 条记录，其中 1 条本来就是软删除的）")
             tree = svc.list_tree(db)
             check("被删学科已从树中消失",
                   math.id not in [t.id for t in tree], f"顶层={[t.name for t in tree]}")
-            remaining_q = db.query(Question).filter(Question.folder_id == cat.id).count()
-            check("题目未被删除（仍挂在原大类）", remaining_q == 4,
-                  f"该大类下题目数={remaining_q}")
+            alive_in_cat = db.query(Question).filter(
+                Question.folder_id == cat.id,
+                Question.deleted_at.is_(None)).count()
+            check("**该大类下已无未删除的题目**", alive_in_cat == 0,
+                  f"未删除题目数={alive_in_cat}")
+            all_in_cat = db.query(Question).filter(
+                Question.folder_id == cat.id).count()
+            check("题目仍在库里（是软删除，不是物理删除）", all_in_cat == 4,
+                  f"该大类下题目总数={all_in_cat}")
             expect_raises("重复删除 -> FolderNotFoundError",
                           (FolderNotFoundError,), svc.delete_folder, db, math.id)
 
