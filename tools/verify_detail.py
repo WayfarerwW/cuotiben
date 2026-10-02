@@ -10,6 +10,7 @@
 - 深链接 `#/questions/q/{id}` 能直接打开（刷新/书签场景）
 - 纯图片题目（无文字题干）也能打开并看到图
 - 列表题干列有缩略图（纯图片题目否则认不出是哪道题）
+- **程序化 go('questions') 不会收起详情**（切大类曾把详情关掉）
 
 用法：python tools/verify_detail.py [端口]
 自检自己起测试服务器与浏览器，不需要预先启动服务。
@@ -107,11 +108,66 @@ class CDP:
                   x=box["x"], y=box["y"], button="left", clickCount=1)
 
     def key(self, key: str, vk: int) -> None:
-        # 只发 keyDown/keyUp：keyDown 不带 text 不会产生字符输入
         self.call("Input.dispatchKeyEvent", type="keyDown", key=key,
                   windowsVirtualKeyCode=vk)
         self.call("Input.dispatchKeyEvent", type="keyUp", key=key,
                   windowsVirtualKeyCode=vk)
+
+    # ---- 状态查询与等待：把"时序问题"和"真 bug"分开 ----
+
+    def detail_in_dom(self) -> bool:
+        return self.js("!!document.querySelector('.modal--detail')") is True
+
+    def wait_detail(self, want: bool, timeout: float = 6.0) -> bool:
+        """轮询等详情开/关到位。
+
+        固定 sleep 在自检里很不稳：前面的用例一旦多留了一点状态，
+        后面就会测到残留。等待+轮询能把"时序问题"和"真 bug"分开。
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.detail_in_dom() == want:
+                return True
+            time.sleep(0.25)
+        return self.detail_in_dom() == want
+
+    def ensure_closed(self) -> None:
+        """确保详情是关的（用应用自己的入口关，并等它真的关掉）。"""
+        if not self.detail_in_dom():
+            return
+        self.js("""(() => {
+          document.getElementById('app')._vnode.component
+            .setupState.closeDetail();
+          return true;
+        })()""")
+        if not self.wait_detail(False, 3.0):
+            self.key("Escape", 27)
+            self.wait_detail(False, 3.0)
+
+    def click_selector(self, selector: str, timeout: float = 8.0) -> bool:
+        """轮询等元素出现且可被命中，然后用真实鼠标点它。
+
+        不要假设"设置 id 之后马上就能点" —— 切页/换分类后列表会重新渲染，
+        行可能短暂不在 DOM 里。轮询等能把"时序"和"真 bug"分开。
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            b = self.box(selector)
+            if b and b["same"]:
+                self.click_at(b)
+                return True
+            time.sleep(0.3)
+        return False
+
+    def wait_selector(self, selector: str, timeout: float = 8.0) -> bool:
+        """等元素出现且可被命中（不点）。"""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            b = self.box(selector)
+            if b and b["same"]:
+                return True
+            time.sleep(0.3)
+        return False
 
 
 def main() -> int:  # noqa: C901
@@ -177,6 +233,8 @@ def main() -> int:  # noqa: C901
 
         subj = post("/folders", {"name": "数学"})
         leaf = post("/folders", {"name": "极限", "parent_id": subj["id"]})
+        # 第二个大类：用于验证切大类的行为
+        leaf2 = post("/folders", {"name": "导数", "parent_id": subj["id"]})
 
         stem_img = upload(_jpeg(), "s.jpg")
         ans_img = upload(_jpeg(50, 50, (200, 60, 60)), "a.jpg")
@@ -226,7 +284,9 @@ def main() -> int:  # noqa: C901
         cdp = CDP(ws_url)
         cdp.call("Runtime.enable")
         time.sleep(3)
-        return run_cases(cdp, q1, q2, secret)
+        # 把 secret 与第二个大类 id 带到用例里
+        cdp.js(f"window.__secret = {secret!r}; window.__leaf2 = {leaf2['id']};")
+        return run_cases(cdp)
     finally:
         for p in (browser, server):
             if p is not None:
@@ -235,7 +295,10 @@ def main() -> int:  # noqa: C901
         shutil.rmtree(work, ignore_errors=True)
 
 
-def run_cases(cdp: CDP, q1: dict, q2: dict, secret: str) -> int:  # noqa: C901
+def run_cases(cdp: CDP) -> int:  # noqa: C901
+    secret = cdp.js("window.__secret") or ""
+    leaf2_id = cdp.js("window.__leaf2")
+
     section("列表入口")
     cdp.js("""(() => {
       const n = Array.from(document.querySelectorAll('.nav__item'))
@@ -260,24 +323,17 @@ def run_cases(cdp: CDP, q1: dict, q2: dict, secret: str) -> int:  # noqa: C901
     # **必须用真实鼠标点击**：`el.click()` 是合成事件、**不会先聚焦元素**，
     # 而真实点击顺序是 mousedown -> focus -> click。用合成事件的话
     # rememberFocus() 拿到的会是 body，于是"关闭后焦点归还"永远测不过 ——
-    # 那是自检不忠实，不是产品缺陷。第一次就是这么误判的。
-    target = cdp.js("""(() => {
+    # 那是自检不忠实，不是产品缺陷。
+    cdp.js("""(() => {
       const bs = Array.from(document.querySelectorAll('.stem-open'));
       const t = bs.find(b => b.textContent.includes('lim'));
-      if (!t) return null;
-      t.id = 'detail-probe';
-      return 'marked';
+      if (t) t.id = 'detail-probe';
+      return !!t;
     })()""")
-    expect("找到了有文字题干的题目", target == "marked", target)
-    box = cdp.box("#detail-probe")
-    expect("题干按钮可被命中（没有元素遮挡）",
-           bool(box) and box["same"] is True, box)
-    if box:
-        cdp.click_at(box)
-    time.sleep(1.6)
-
-    expect("详情浮层已打开", cdp.js(
-        "!!document.querySelector('.modal--detail')") is True)
+    clicked = cdp.click_selector("#detail-probe")
+    expect("点中了有文字题干的题目", clicked is True)
+    if clicked:
+        expect("（前置）详情已打开", cdp.wait_detail(True) is True)
 
     stem_shown = cdp.js("""(() => {
       const el = document.querySelector('.modal--detail .review__stem');
@@ -372,9 +428,7 @@ def run_cases(cdp: CDP, q1: dict, q2: dict, secret: str) -> int:  # noqa: C901
 
     section("关闭与焦点归还")
     cdp.key("Escape", 27)
-    time.sleep(1.2)
-    expect("Esc 关闭详情",
-           cdp.js("!!document.querySelector('.modal--detail')") is False)
+    expect("Esc 关闭详情", cdp.wait_detail(False, 4.0) is True)
     expect("关闭后回到普通页面 hash",
            cdp.js("location.hash") == "#/questions", cdp.js("location.hash"))
     focus_back = cdp.js("""(() => {
@@ -385,19 +439,14 @@ def run_cases(cdp: CDP, q1: dict, q2: dict, secret: str) -> int:  # noqa: C901
     expect("关闭后焦点归还到题干按钮", focus_back == "returned", focus_back)
 
     section("纯图片题目")
-    # 同样用真实鼠标点击
     cdp.js("""(() => {
       const bs = Array.from(document.querySelectorAll('.stem-open'));
       const t = bs.find(b => b.textContent.includes('仅图片'));
       if (t) t.id = 'detail-probe2';
       return !!t;
     })()""")
-    box2 = cdp.box("#detail-probe2")
-    if box2:
-        cdp.click_at(box2)
-    time.sleep(1.6)
-    expect("纯图片题目也能打开详情", cdp.js(
-        "!!document.querySelector('.modal--detail')") is True)
+    cdp.click_selector("#detail-probe2")
+    expect("纯图片题目也能打开详情", cdp.wait_detail(True) is True)
     imgs = cdp.js("""(() => {
       return document.querySelectorAll('.modal--detail .review__images img').length;
     })()""")
@@ -407,14 +456,16 @@ def run_cases(cdp: CDP, q1: dict, q2: dict, secret: str) -> int:  # noqa: C901
            cdp.js("""(() => {
              return !!document.querySelector('.modal--detail .review__stem');
            })()""") is False)
+    cdp.ensure_closed()
 
     section("深链接直接打开（刷新/书签场景）")
-    cdp.key("Escape", 27)
-    time.sleep(1.0)
-    cdp.js(f"location.hash = '#/questions/q/{q1['id']}';")
-    time.sleep(2.2)
-    expect("改 hash 能打开对应题目",
-           cdp.js("!!document.querySelector('.modal--detail')") is True)
+    qid = cdp.js("""(() => {
+      const qs = document.getElementById('app')._vnode.component.setupState.questions;
+      const t = qs.find(x => (x.stem || '').includes('lim'));
+      return t ? t.id : null;
+    })()""")
+    cdp.js(f"location.hash = '#/questions/q/{qid}';")
+    expect("改 hash 能打开对应题目", cdp.wait_detail(True) is True)
     shown = cdp.js("""(() => {
       const el = document.querySelector('.modal--detail .review__stem');
       return el ? el.textContent.trim().slice(0, 20) : null;
@@ -423,7 +474,109 @@ def run_cases(cdp: CDP, q1: dict, q2: dict, secret: str) -> int:  # noqa: C901
     expect("深链接打开时答案仍是遮住的",
            cdp.js(f"document.documentElement.innerHTML.includes({secret!r})") is False)
 
+    section("程序化跳转不会收起详情（本次 bug 的核心回归）")
+    # 前提事实：详情遮罩是 `position:fixed; inset:0; z-index:60`，侧边栏
+    # `z-index:40` —— **详情打开时遮罩盖住侧边栏，点不到大类行**。
+    # 回归的是：`selectFolder()` / 搜索触发的**程序化** go('questions')
+    # 不能收起详情（以前只要详情开着，任何 go('questions') 都会关掉它）。
+    cdp.js("""(() => {
+      document.getElementById('app')._vnode.component.setupState.go('questions');
+      return true;
+    })()""")
+    time.sleep(1.6)
+    expect("**程序化 go('questions') 不会收起详情**", cdp.detail_in_dom() is True)
+    expect("深链接 hash 也没被冲掉",
+           (cdp.js("location.hash") or "").startswith("#/questions/q/"),
+           cdp.js("location.hash"))
+
+    # 关掉后大类行应当可以正常点击切换
+    cdp.ensure_closed()
+    expect("（前置）详情已关闭，遮罩不再遮挡", cdp.detail_in_dom() is False)
+
+    cdp.js("""(() => {
+      const rows = Array.from(document.querySelectorAll('.tree__children .tree__row'));
+      const t = rows.find(r => r.textContent.includes('导数'));
+      if (t) t.id = 'cat-probe';
+      return !!t;
+    })()""")
+    b = cdp.box("#cat-probe")
+    expect("详情关闭后大类行可被命中（遮罩不再挡）",
+           bool(b) and b["same"] is True, b)
+    if b:
+        cdp.click_at(b)
+    time.sleep(2.0)
+    after = cdp.js("""(() => {
+      const comp = document.getElementById('app')._vnode.component;
+      return JSON.stringify({
+        currentFolderId: comp.setupState.currentFolderId,
+        currentFolderName: comp.setupState.currentFolderName,
+      });
+    })()""")
+    af = json.loads(after) if (after or "").startswith("{") else {}
+    expect("点大类成功切到「导数」",
+           af.get("currentFolderId") == leaf2_id,
+           f"folderId={af.get('currentFolderId')} 期望={leaf2_id}")
+    expect("工具栏显示新大类名",
+           "导数" in (af.get("currentFolderName") or ""),
+           af.get("currentFolderName"))
+
+    section("点侧边栏导航仍能收起详情")
+    # 切回有题目的分类，开详情，然后点导航退出
+    cdp.js("""(() => {
+      const rows = Array.from(document.querySelectorAll('.tree__children .tree__row'));
+      const t = rows.find(r => r.textContent.includes('极限'));
+      if (t) t.id = 'cat-probe2';
+      return !!t;
+    })()""")
+    switched_back = cdp.click_selector("#cat-probe2")
+    expect("能切回有题目的分类「极限」", switched_back is True)
+    time.sleep(2.2)
+    in_leaf = cdp.js("""(() => {
+      const c = document.getElementById('app')._vnode.component;
+      return JSON.stringify({folder: c.setupState.currentFolderName,
+        rows: document.querySelectorAll('.stem-open').length});
+    })()""")
+    print("  切回后：" + str(in_leaf))
+    cdp.js("""(() => {
+      const bs = Array.from(document.querySelectorAll('.stem-open'));
+      const t = bs.find(b => b.textContent.includes('lim'));
+      if (t) t.id = 'detail-probe5';
+      return !!t;
+    })()""")
+    expect("回到有题目的分类，能再次打开详情", cdp.click_selector("#detail-probe5"))
+    expect("（前置）详情又打开了", cdp.wait_detail(True) is True)
+
+    cdp.js("""(() => {
+      const n = Array.from(document.querySelectorAll('.nav__item'))
+        .find(x => x.textContent.includes('题目管理'));
+      if (n) n.click();
+      return !!n;
+    })()""")
+    expect("点导航「题目管理」会收起详情（用户主动退出）",
+           cdp.wait_detail(False, 4.0) is True)
+    expect("hash 回到普通页面",
+           cdp.js("location.hash") == "#/questions", cdp.js("location.hash"))
+
     section("点遮罩关闭")
+    # 重新加载一次页面，让状态干净（不依赖"上一段刚刚关闭"的时序）
+    cdp.call("Page.enable")
+    cdp.call("Page.reload")
+    time.sleep(4.0)
+    cdp.js("""(() => {
+      const n = Array.from(document.querySelectorAll('.nav__item'))
+        .find(x => x.textContent.includes('题目管理'));
+      if (n) n.click();
+      return !!n;
+    })()""")
+    time.sleep(2.5)
+    cdp.js("""(() => {
+      const bs = Array.from(document.querySelectorAll('.stem-open'));
+      const t = bs.find(b => b.textContent.includes('lim')) || bs[0];
+      if (t) t.id = 'detail-probe6';
+      return !!t;
+    })()""")
+    expect("能点开详情（干净加载后）", cdp.click_selector("#detail-probe6"))
+    expect("（前置）详情已打开", cdp.wait_detail(True) is True)
     cdp.js("""(() => {
       const mask = document.querySelector('.modal-mask');
       const r = mask.getBoundingClientRect();
@@ -432,9 +585,7 @@ def run_cases(cdp: CDP, q1: dict, q2: dict, secret: str) -> int:  # noqa: C901
         clientX: r.left + 4, clientY: r.top + 4}));
       return true;
     })()""")
-    time.sleep(1.2)
-    expect("点遮罩关闭详情",
-           cdp.js("!!document.querySelector('.modal--detail')") is False)
+    expect("点遮罩关闭详情", cdp.wait_detail(False, 4.0) is True)
 
     print("\n" + "-" * 74)
     print(f"合计 {OK + FAIL} 项，通过 {OK}，失败 {FAIL}")

@@ -85,7 +85,7 @@
               <a class="nav__item" :class="{ 'is-active': currentPage === item.key }"
                  :href="'#/' + item.key" :title="item.label"
                  :aria-current="currentPage === item.key ? 'page' : null"
-                 @click.prevent="go(item.key)">
+                 @click.prevent="go(item.key, true)">
                 <svg class="icon"><use :href="'#' + item.icon"></use></svg>
                 <span class="nav__label">{{ item.label }}</span>
                 <span v-if="item.key === 'review' && reviewCount > 0"

@@ -631,8 +631,18 @@
       /**
        * 让浮层状态与 hash 中的题目 id 对齐。
        * 直接把题目列表里的那一项填进去，不发请求。
+       *
+       * `suppressDetailSync` 是防重开竞态用的：`closeDetail()` 会把 hash 从
+       * `#/questions/q/12` 改回 `#/questions`，这个改动的 hashchange（以及
+       * 关闭后紧跟着的 loadPage 回调）可能在本函数**之后**才跑。那时
+       * hash 若仍是旧的详情地址，就会"刚关掉又自己打开" —— 表现是关闭
+       * 详情后侧边栏仍被遮罩挡住、点不到大类。关闭时挂上标志、
+       * 下一个 tick 摘掉，挡住这一小段窗口。
        */
+      var suppressDetailSync = false;
+
       function applyHashDetail() {
+        if (suppressDetailSync) { return; }
         var id = detailIdFromHash();
         if (id === null) {
           if (questionDetail.open) { closeDetail(true); }
@@ -648,25 +658,34 @@
         } else {
           // 列表里没有（已被删除、或还没加载完）：把 hash 收回普通页面，
           // 否则会出现"地址栏指着某题、界面什么都没打开"的悬空状态
-          toast('找不到这道题（可能已删除）', 'warning');
+          if (!suppressDetailSync) { toast('找不到这道题（可能已删除）', 'warning'); }
           if (window.location.hash.indexOf('/q/') !== -1) {
             window.location.hash = '#/questions';
           }
         }
       }
 
-      function go(page) {
+      /**
+       * 切换页面。
+       *
+       * `fromNav` 只在**点击侧边栏导航项**时为 true。它决定要不要收起
+       * 已打开的题目详情：
+       *
+       * `#/questions/q/12` 也属于 questions 页，所以"再点一次题目管理"
+       * 需要能被理解为"退出详情"，否则用户没有鼠标以外的方式关掉浮层
+       * （Esc 之外）。但**程序化跳转不能带上这个副作用** ——
+       * `selectFolder()`（切大类）和 `onSearchInput()` 都会调
+       * `go('questions')`，曾经因此一点大类就把详情弹窗关掉。
+       */
+      function go(page, fromNav) {
         if (VALID_PAGES.indexOf(page) === -1) { page = 'home'; }
         var hashIsDetail = detailIdFromHash() !== null;
         currentPage.value = page;
         drawerOpen.value = false;
         userMenuOpen.value = false;
 
-        // `#/questions/q/12` 也属于 questions 页，所以这里要分清两种情况：
-        //   1) 已经在详情里、又点了"题目管理" -> 用户是要退出详情，收回 hash
-        //   2) 地址栏是深链接、详情还没打开（列表还没加载完）-> 保留 hash，
-        //      等数据到了 applyHashDetail() 再把详情打开
-        if (hashIsDetail && questionDetail.open) {
+        if (hashIsDetail && questionDetail.open && fromNav) {
+          // 点导航 = 主动退出详情，收回 hash
           window.location.hash = '#/' + page;
         } else if (!hashIsDetail && window.location.hash !== '#/' + page) {
           window.location.hash = '#/' + page;
@@ -1637,6 +1656,7 @@ function trapFocus(event) {
        */
       function closeDetail(keepHash) {
         if (!questionDetail.open) { return; }
+        suppressDetailSync = true;
         questionDetail.open = false;
         questionDetail.question = null;
         questionDetail.review = null;
@@ -1645,6 +1665,10 @@ function trapFocus(event) {
         if (!keepHash && window.location.hash.indexOf('/q/') !== -1) {
           window.location.hash = '#/questions';
         }
+        // 等这一轮 hashchange / loadPage 回调都跑完再放开
+        nextTick(function () {
+          window.setTimeout(function () { suppressDetailSync = false; }, 0);
+        });
       }
 
       function toggleDetailAnswer() {
