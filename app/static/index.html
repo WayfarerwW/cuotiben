@@ -578,7 +578,17 @@
                            @change="toggleSelectQuestion(q.id, $event.target.checked)">
                   </td>
                   <td class="cell-stem" :data-label="'题干'">
-                    {{ q.stem || '（无题干，仅图片）' }}
+                    <!-- 题干整块可点：进入只读详情（答案默认遮住）。
+                         用 button 而不是给 td 加 @click —— 键盘可 Tab 聚焦、
+                         Enter/Space 原生可触发，不用另写按键处理。 -->
+                    <button class="stem-open" type="button"
+                            :aria-label="'查看题目详情：' + (q.stem || '（无题干，仅图片）')"
+                            :title="q.stem || '（无题干，仅图片）'"
+                            @click="openDetail(q)">
+                      <img v-if="stemThumb(q)" class="stem-thumb"
+                           :src="stemThumb(q)" alt="" aria-hidden="true">
+                      <span class="stem-open__text">{{ q.stem || '（无题干，仅图片）' }}</span>
+                    </button>
                   </td>
                   <td :data-label="'文件夹'">{{ q.folder_name || '—' }}</td>
                   <td :data-label="'标签'">
@@ -1279,6 +1289,126 @@
                   type="button" @click="confirmDialogOk">
             {{ confirmDialog.confirmLabel }}
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================== 题目详情（只读浏览） ===================== -->
+    <!-- 刻意不放「打勾」：打勾会改复习计划，浏览错题不该有副作用。要打勾去复习页。 -->
+    <div v-if="questionDetail.open" class="modal-mask" @mousedown.self.prevent
+         @click.self="closeDetail">
+      <div class="modal modal--detail" role="dialog" aria-modal="true"
+           aria-labelledby="detail-title">
+        <div class="modal__head">
+          <h2 class="card-title" id="detail-title">题目详情</h2>
+          <div class="detail__head-actions">
+            <button class="btn btn--text btn--sm" type="button"
+                    @click="copyDetailStem">
+              {{ questionDetail.copied ? '已复制' : '复制题干' }}
+            </button>
+            <button class="btn btn--secondary btn--sm" type="button"
+                    @click="editFromDetail">
+              <svg class="icon icon--sm"><use href="#i-edit"></use></svg>编辑
+            </button>
+            <button class="icon-btn" type="button" aria-label="关闭"
+                    @click="closeDetail">
+              <svg class="icon icon--sm"><use href="#i-close"></use></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="modal__body">
+          <!-- 元信息 -->
+          <div class="detail__meta">
+            <span v-if="questionDetail.question.folder_name" class="text-aux">
+              {{ questionDetail.question.folder_name }}
+            </span>
+            <span v-if="questionDetail.question.is_starred" class="tag tag--star">
+              <svg class="icon icon--sm"><use href="#i-star"></use></svg>重点
+            </span>
+            <span class="status"
+                  :class="questionDetail.question.mastery_status === 'mastered'
+                    ? 'status--won' : 'status--wrong'">
+              <span class="status__dot"></span>
+              {{ questionDetail.question.mastery_status === 'mastered' ? '已拿下' : '仍易错' }}
+            </span>
+            <span v-for="t in questionDetail.question.tags" :key="t.id"
+                  class="tag">{{ t.name }}</span>
+          </div>
+
+          <!-- 题干区 -->
+          <section class="detail__block">
+            <h3 class="detail__label">题干</h3>
+            <div v-if="detailStemImages().length" class="review__images">
+              <img v-for="img in detailStemImages()" :key="img.id"
+                   :src="imageUrl(img.file_path)" alt="题干图片"
+                   @click="previewImage = imageUrl(img.file_path)">
+            </div>
+            <p v-if="(questionDetail.question.stem || '').trim()" class="review__stem">{{
+              questionDetail.question.stem }}</p>
+            <p v-else-if="!detailStemImages().length" class="text-faint">
+              （这道题没有题干内容）
+            </p>
+          </section>
+
+          <!-- 答案区：默认**不渲染**，揭开来才进 DOM。
+               只用 CSS 藏起来是不够的 —— 那样 Ctrl+A / 查看源码就能看到，
+               "遮住答案"就形同虚设。 -->
+          <section class="detail__block">
+            <div class="detail__answer-head">
+              <h3 class="detail__label">答案</h3>
+              <button class="btn btn--text btn--sm answer-toggle" type="button"
+                      :aria-expanded="questionDetail.answerOpen ? 'true' : 'false'"
+                      aria-controls="detail-answer"
+                      @click="toggleDetailAnswer">
+                <svg class="icon icon--sm answer-toggle__caret" aria-hidden="true">
+                  <use href="#i-chevron-right"></use>
+                </svg>
+                {{ questionDetail.answerOpen ? '收起答案' : '显示答案' }}
+              </button>
+            </div>
+
+            <div v-if="!questionDetail.answerOpen" class="detail__veil">
+              <svg class="icon icon--sm"><use href="#i-alert"></use></svg>
+              答案已遮住 —— 先自己想一遍，再点「显示答案」
+            </div>
+
+            <template v-else>
+              <div id="detail-answer">
+                <div v-if="detailAnswerImages().length" class="review__images">
+                  <img v-for="img in detailAnswerImages()" :key="img.id"
+                       :src="imageUrl(img.file_path)" alt="答案图片"
+                       @click="previewImage = imageUrl(img.file_path)">
+                </div>
+                <p v-if="(questionDetail.question.answer || '').trim()"
+                   class="review__answer">{{ questionDetail.question.answer }}</p>
+                <p v-else-if="!detailAnswerImages().length" class="text-faint">
+                  （这道题没有答案内容）
+                </p>
+              </div>
+            </template>
+          </section>
+
+          <!-- 复习进度（单题接口取到才有；取不到就不显示这一段） -->
+          <section v-if="questionDetail.review" class="detail__block">
+            <h3 class="detail__label">复习进度</h3>
+            <ul class="kv-list">
+              <li><span>已复习次数</span>
+                <span class="num">{{ questionDetail.review.review_count || 0 }} 次</span></li>
+              <li><span>当前间隔档位</span>
+                <span class="num">第 {{ (questionDetail.review.interval_index || 0) + 1 }} 档</span></li>
+              <li><span>下次复习</span>
+                <span class="num">{{ questionDetail.review.next_review_at
+                  ? fmtDate(questionDetail.review.next_review_at) : '—' }}</span></li>
+              <li><span>录入时间</span>
+                <span class="num">{{ fmtDate(questionDetail.question.created_at) }}</span></li>
+            </ul>
+          </section>
+        </div>
+
+        <div class="modal__foot">
+          <span class="text-aux">只读预览，不会改动复习计划</span>
+          <button class="btn btn--secondary" type="button" @click="closeDetail">关闭</button>
         </div>
       </div>
     </div>

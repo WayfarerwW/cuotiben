@@ -1900,6 +1900,95 @@ textarea.input {
   font-size: var(--fs-aux);
 }
 
+/* --- 题目详情浮层 --- */
+/* 详情要放图片和大段文字，比表单弹窗更宽 */
+.modal--detail { max-width: 720px; }
+
+.detail__head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-compact);
+}
+
+.detail__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-compact);
+  flex-wrap: wrap;
+  padding-bottom: var(--sp-tight);
+  border-bottom: 1px solid var(--c-border);
+}
+
+.detail__block { margin-top: var(--sp-element); }
+
+.detail__label {
+  margin: 0;
+  font-size: var(--fs-aux);
+  font-weight: var(--fw-medium);
+  color: var(--c-text-muted);
+}
+
+.detail__answer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-compact);
+}
+
+/* 答案遮罩：视觉上明确"这里有东西、但先别看"。
+   文字用正文色而非 --c-text-muted —— 后者在 --c-bg 上只有 3.74:1，
+   达不到 AA 4.5:1（check_contrast 会拦下来）。这段是"请先自己想一遍"的
+   指令性文案，用正文色本来也更合适。 */
+.detail__veil {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-compact);
+  margin-top: 6px;
+  padding: var(--sp-page) var(--sp-tight);
+  border: 1px dashed var(--c-border);
+  border-radius: var(--radius-control);
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-size: var(--fs-aux);
+  text-align: center;
+}
+
+/* --- 题干列：整块可点 + 缩略图 --- */
+.stem-open {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-tight);
+  width: 100%;
+  max-width: 100%;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--c-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.stem-open:hover { background: var(--c-hover-bg); }
+
+.stem-open__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stem-thumb {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--c-border);
+  object-fit: cover;
+}
+
 /* --- 数据说明页：孤儿图片清单 --- */
 .orphan-list {
   margin-top: var(--sp-tight);

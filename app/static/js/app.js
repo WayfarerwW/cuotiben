@@ -193,6 +193,28 @@
       var activeReviewId = ref(null);
       var panelAnswerOpen = ref(false);
 
+      /* ---------------- 题目详情（只读浏览） ---------------- */
+
+      /**
+       * 题目详情浮层。
+       *
+       * 为什么要单独有一个：题目管理页的表格只有"题干预览"纯文本，答案
+       * 完全不显示；唯一能看到完整信息的入口是**编辑弹窗** —— 那是改数据
+       * 的地方，只是"想看看"不该进那里。复习页虽然能遮答案再揭开，
+       * 但它只列今日该复习的题，并不是"我的全部错题"。
+       *
+       * 这个浮层是**纯只读**的，刻意不放「打勾」：打勾会改复习计划
+       * （重置 interval_index、推进 next_review_at），浏览错题不该有副作用。
+       * 要打勾请去复习页。
+       */
+      var questionDetail = reactive({
+        open: false,
+        question: null,        // 列表项（已含 stem/answer/images/tags）
+        review: null,          // GET /questions/{id} 的复习进度，尽力而为
+        answerOpen: false,     // 答案默认**遮住**
+        copied: false,
+      });
+
       /* ---------------- 主题相关 ---------------- */
       var answersOpen = reactive({});
       var previewImage = ref(null);
@@ -582,17 +604,71 @@
 
       /* ================= 路由 ================= */
 
+      /**
+       * 从 hash 解析出页面名。
+       *
+       * 支持两类：
+       *   #/questions              普通页面
+       *   #/questions/q/12         题目详情深链接 —— 落到 questions 页，
+       *                            再由 applyHashDetail() 打开对应详情
+       *
+       * 深链接是有意加的：题目详情浮层若不能书签/刷新回到同一题，
+       * "进去看一道题"这件事就没法被引用、也没法恢复现场。
+       */
       function pageFromHash() {
         var raw = (window.location.hash || '').replace(/^#\/?/, '');
-        return VALID_PAGES.indexOf(raw) !== -1 ? raw : 'home';
+        var base = raw.split('/')[0];
+        return VALID_PAGES.indexOf(base) !== -1 ? base : 'home';
+      }
+
+      /** hash 里的题目 id（`#/questions/q/12` -> 12），没有则 null。 */
+      function detailIdFromHash() {
+        var raw = (window.location.hash || '').replace(/^#\/?/, '');
+        var m = /^questions\/q\/(\d+)$/.exec(raw);
+        return m ? Number(m[1]) : null;
+      }
+
+      /**
+       * 让浮层状态与 hash 中的题目 id 对齐。
+       * 直接把题目列表里的那一项填进去，不发请求。
+       */
+      function applyHashDetail() {
+        var id = detailIdFromHash();
+        if (id === null) {
+          if (questionDetail.open) { closeDetail(true); }
+          return;
+        }
+        if (questionDetail.open && questionDetail.question
+            && questionDetail.question.id === id) {
+          return;
+        }
+        var q = questions.value.find(function (x) { return x.id === id; });
+        if (q) {
+          openDetail(q);
+        } else {
+          // 列表里没有（已被删除、或还没加载完）：把 hash 收回普通页面，
+          // 否则会出现"地址栏指着某题、界面什么都没打开"的悬空状态
+          toast('找不到这道题（可能已删除）', 'warning');
+          if (window.location.hash.indexOf('/q/') !== -1) {
+            window.location.hash = '#/questions';
+          }
+        }
       }
 
       function go(page) {
         if (VALID_PAGES.indexOf(page) === -1) { page = 'home'; }
+        var hashIsDetail = detailIdFromHash() !== null;
         currentPage.value = page;
         drawerOpen.value = false;
         userMenuOpen.value = false;
-        if (window.location.hash !== '#/' + page) {
+
+        // `#/questions/q/12` 也属于 questions 页，所以这里要分清两种情况：
+        //   1) 已经在详情里、又点了"题目管理" -> 用户是要退出详情，收回 hash
+        //   2) 地址栏是深链接、详情还没打开（列表还没加载完）-> 保留 hash，
+        //      等数据到了 applyHashDetail() 再把详情打开
+        if (hashIsDetail && questionDetail.open) {
+          window.location.hash = '#/' + page;
+        } else if (!hashIsDetail && window.location.hash !== '#/' + page) {
           window.location.hash = '#/' + page;
         }
         loadPage(page);
@@ -604,6 +680,8 @@
           currentPage.value = page;
           loadPage(page);
         }
+        // 详情浮层跟着 hash 走：刷新、后退、书签都能对齐
+        applyHashDetail();
       }
 
       /* ================= 载入数据 ================= */
@@ -870,6 +948,11 @@
           .then(function () {
             recomputeStats();
             if (page === 'notes') { checkNoteDraft(); }
+            // 刷新/书签直接落在 `#/questions/q/12` 时，题目列表这一刻才有数据，
+            // 必须在这里再对一次 hash，否则深链接打不开详情
+            if (page === 'questions' || page === 'home') {
+              if (detailIdFromHash() !== null) { applyHashDetail(); }
+            }
           })
           .catch(function (err) { loadError.value = err.message || '加载失败'; })
           .then(function () { loading.value = false; });
@@ -1157,7 +1240,7 @@
 
       function modalIsOpen() {
         return !!(questionEditor.open || exportDialog.open || previewImage.value
-          || confirmDialog.open);
+          || confirmDialog.open || questionDetail.open);
       }
 
       function anyOverlayOpen() {
@@ -1166,13 +1249,13 @@
 
       /** 关闭所有浮层。Esc 与点击外部都走这里，保证行为一致。 */
       function closeOverlays() {
-        // 确认框放最前：它总是最后弹出来的，Esc 应当先关它。
-        // 走 confirmDialogCancel 而不是直接置 open=false ——
-        // 那样 Promise 永远不会 resolve，调用方的 .then 就悬挂了。
+        // 顺序 = 从最"上"的浮层往下关（后弹的先关）。
+        // 确认框与图片预览排前面：它们通常压在别的浮层之上。
         if (confirmDialog.open) { confirmDialogCancel(); return; }
+        if (previewImage.value) { previewImage.value = null; restoreFocus(); return; }
+        if (questionDetail.open) { closeDetail(); return; }
         if (questionEditor.open) { closeQuestionEditor(); return; }
         if (exportDialog.open) { exportDialog.open = false; restoreFocus(); return; }
-        if (previewImage.value) { previewImage.value = null; restoreFocus(); return; }
         if (notifOpen.value) { closeNotif(); return; }
         if (userMenuOpen.value) { closeUserMenu(); }
       }
@@ -1439,7 +1522,7 @@ function trapFocus(event) {
         document.body.style.overflow = locked ? 'hidden' : '';
       }
 
-      // 四类弹窗任一打开即锁滚动（题目编辑 / 导出 / 图片预览 / 确认框）。
+      // 五类弹窗任一打开即锁滚动（题目编辑 / 导出 / 图片预览 / 确认框 / 题目详情）。
       // 用 watch 而不是散落在各 open/close 里，避免将来新增弹窗时漏掉
       // 其中一条路径（Esc / 遮罩 / 按钮都要还原）。
       watch(modalIsOpen, updateScrollLock);
@@ -1463,6 +1546,136 @@ function trapFocus(event) {
       /* ================= 复习页 ================= */
 
       function toggleAnswer(id) { answersOpen[id] = !answersOpen[id]; }
+
+      /**
+       * 列表里的题干缩略图（题干图的第一张），没有则返回空串。
+       *
+       * 为什么要它：纯图片题目在列表里只显示"（无题干，仅图片）"，
+       * 光看文字根本认不出是哪道题 —— 扫一眼缩略图才知道。
+       */
+      function stemThumb(q) {
+        if (!q) { return ''; }
+        var imgs = (q.images || []).filter(function (i) {
+          return (i.kind || 'stem') === 'stem';
+        });
+        return imgs.length ? imageUrl(imgs[0].file_path) : '';
+      }
+
+      /* ---------------- 题目详情浮层 ---------------- */
+
+      /** 题干图（kind='stem'）。 */
+      function detailStemImages() {
+        var q = questionDetail.question;
+        if (!q) { return []; }
+        return (q.images || []).filter(function (i) {
+          return (i.kind || 'stem') === 'stem';
+        });
+      }
+
+      /** 答案图（kind='answer'）。 */
+      function detailAnswerImages() {
+        var q = questionDetail.question;
+        if (!q) { return []; }
+        return (q.images || []).filter(function (i) {
+          return i.kind === 'answer';
+        });
+      }
+
+      /** 这道题是否只有图、没有文字（用于给出更有用的提示）。 */
+      function detailIsImageOnly() {
+        var q = questionDetail.question;
+        if (!q) { return false; }
+        var noText = !(q.stem || '').trim() && !(q.answer || '').trim();
+        return noText && (q.images || []).length > 0;
+      }
+
+      /**
+       * 打开题目详情。
+       *
+       * 先把列表项直接填进去 —— `GET /questions` 返回的每项**已经含**
+       * stem/answer/images/tags，所以打开是**瞬时的、不发请求**；
+       * 复习进度（interval_index / review_count）列表里没有，再补一次
+       * 单题请求，且失败也不影响浏览（`review` 保持 null，界面就不显示那一段）。
+       */
+      function openDetail(q) {
+        if (!q || !q.id) { return; }
+        questionDetail.question = q;
+        questionDetail.review = null;
+        questionDetail.answerOpen = false;   // 每次打开都重新遮住
+        questionDetail.copied = false;
+        questionDetail.open = true;
+        rememberFocus();
+        // 弹窗打开必须把焦点移入，否则键盘用户按 Tab 会从一个"在背后的"
+        // 元素开始走，视觉上焦点像是凭空出现。见 AGENTS.md 第十节 10.1。
+        nextTick(focusIntoModal);
+        // 深链接：刷新/书签能直接回到这道题
+        var want = '#/questions/q/' + q.id;
+        if (window.location.hash !== want) {
+          window.location.hash = want;
+        }
+        // 复习进度：纯附加信息，失败静默
+        API.getQuestion(q.id)
+          .then(function (full) {
+            if (questionDetail.open
+                && questionDetail.question
+                && questionDetail.question.id === q.id) {
+              questionDetail.review = full;
+            }
+          })
+          .catch(function () { /* 进度取不到不影响看题 */ });
+      }
+
+      /**
+       * 关闭详情；`keepHash` 用于"从深链接同步状态"时避免来回改 hash。
+       *
+       * **顺序很关键：先 restoreFocus，再改 hash。**
+       * 改 hash 会**同步**触发 hashchange -> applyHashDetail() -> 再次
+       * 进入本函数，而 applyHashDetail 会调 openDetail/closeDetail，
+       * 后者会执行 rememberFocus() —— 那时 `document.activeElement` 已经是
+       * body（弹窗刚被移除），于是把上一次记下的"题干按钮"覆盖成 body，
+       * 关闭后焦点就回不到触发元素了。先归还焦点就没有这个窗口。
+       */
+      function closeDetail(keepHash) {
+        if (!questionDetail.open) { return; }
+        questionDetail.open = false;
+        questionDetail.question = null;
+        questionDetail.review = null;
+        questionDetail.answerOpen = false;
+        restoreFocus();
+        if (!keepHash && window.location.hash.indexOf('/q/') !== -1) {
+          window.location.hash = '#/questions';
+        }
+      }
+
+      function toggleDetailAnswer() {
+        questionDetail.answerOpen = !questionDetail.answerOpen;
+      }
+
+      /** 从详情直接跳到编辑弹窗（省得关掉再去表里找那一行）。 */
+      function editFromDetail() {
+        var q = questionDetail.question;
+        closeDetail();
+        if (q) { openQuestionEditor(q); }
+      }
+
+      /** 复制题干（纯图片题目的题干可能很长或是代码）。 */
+      function copyDetailStem() {
+        var q = questionDetail.question;
+        var text = q ? (q.stem || '') : '';
+        if (!text) { toast('这道题没有文字题干', 'warning'); return; }
+        var done = function () {
+          questionDetail.copied = true;
+          toast('题干已复制');
+          window.setTimeout(function () { questionDetail.copied = false; }, 2000);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done).catch(function () {
+            toast('复制失败，请手动选择文本', 'warning');
+          });
+        } else {
+          toast('当前环境不支持自动复制', 'warning');
+        }
+      }
 
       function doResetBackfill(spread) {
         backfillBusy.value = true;
@@ -2197,6 +2410,16 @@ function trapFocus(event) {
         dataError: dataError,
         doBackup: doBackup,
         doExportData: doExportData,
+        questionDetail: questionDetail,
+        openDetail: openDetail,
+        closeDetail: closeDetail,
+        toggleDetailAnswer: toggleDetailAnswer,
+        editFromDetail: editFromDetail,
+        copyDetailStem: copyDetailStem,
+        detailStemImages: detailStemImages,
+        detailAnswerImages: detailAnswerImages,
+        detailIsImageOnly: detailIsImageOnly,
+        stemThumb: stemThumb,
         orphans: orphans,
         orphanBusy: orphanBusy,
         fmtBytes: fmtBytes,
