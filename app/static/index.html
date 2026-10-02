@@ -66,7 +66,8 @@
   -->
   <div id="app">
   <div class="app"
-       :class="{ 'is-collapsed': sidebarCollapsed, 'is-drawer-open': drawerOpen }">
+       :class="{ 'is-collapsed': sidebarCollapsed, 'is-drawer-open': drawerOpen,
+                 'has-modal': modalIsOpen }">
 
     <!-- ===================== 左侧侧边栏 ===================== -->
     <aside class="sidebar" aria-label="主导航">
@@ -112,9 +113,9 @@
                 class="tree__node" :class="{ 'is-open': expandedFolders[subject.id] }">
               <div class="tree__row" role="button" tabindex="0"
                    :aria-expanded="expandedFolders[subject.id] ? 'true' : 'false'"
-                   @click="toggleFolder(subject.id)"
-                   @keydown.enter.prevent="toggleFolder(subject.id)"
-                   @keydown.space.prevent="toggleFolder(subject.id)">
+                   @click.stop="toggleFolder(subject.id)"
+                   @keydown.enter.stop.prevent="toggleFolder(subject.id)"
+                   @keydown.space.stop.prevent="toggleFolder(subject.id)">
                 <svg class="icon icon--sm tree__caret"><use href="#i-chevron-right"></use></svg>
                 <span class="tree__dot" aria-hidden="true"></span>
                 <span class="tree__label">{{ subject.name }}</span>
@@ -144,9 +145,9 @@
                   <div class="tree__row"
                        :class="{ 'is-active': currentFolderId === cat.id }"
                        role="button" tabindex="0"
-                       @click="selectFolder(cat.id)"
-                       @keydown.enter.prevent="selectFolder(cat.id)"
-                       @keydown.space.prevent="selectFolder(cat.id)">
+                       @click.stop="selectFolder(cat.id)"
+                       @keydown.enter.stop.prevent="selectFolder(cat.id)"
+                       @keydown.space.stop.prevent="selectFolder(cat.id)">
                     <span class="tree__label">{{ cat.name }}</span>
                     <span class="tree__count num">{{ cat.question_count || 0 }}</span>
                     <button class="icon-btn icon-btn--on-dark tree__act" type="button"

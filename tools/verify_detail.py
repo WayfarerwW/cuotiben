@@ -475,8 +475,6 @@ def run_cases(cdp: CDP) -> int:  # noqa: C901
            cdp.js(f"document.documentElement.innerHTML.includes({secret!r})") is False)
 
     section("程序化跳转不会收起详情（本次 bug 的核心回归）")
-    # 前提事实：详情遮罩是 `position:fixed; inset:0; z-index:60`，侧边栏
-    # `z-index:40` —— **详情打开时遮罩盖住侧边栏，点不到大类行**。
     # 回归的是：`selectFolder()` / 搜索触发的**程序化** go('questions')
     # 不能收起详情（以前只要详情开着，任何 go('questions') 都会关掉它）。
     cdp.js("""(() => {
@@ -489,22 +487,41 @@ def run_cases(cdp: CDP) -> int:  # noqa: C901
            (cdp.js("location.hash") or "").startswith("#/questions/q/"),
            cdp.js("location.hash"))
 
-    # 关掉后大类行应当可以正常点击切换
-    cdp.ensure_closed()
-    expect("（前置）详情已关闭，遮罩不再遮挡", cdp.detail_in_dom() is False)
-
+    section("详情打开时能切大类（侧边栏浮到遮罩之上）")
+    # 回归：遮罩是 `position:fixed; inset:0; z-index:60`，侧边栏原先只有 40，
+    # 详情一开整个侧边栏就被盖住、**点不到大类行**（命中命中的是 .modal-mask）。
+    # 现在 `.app.has-modal .sidebar` 抬到 --z-modal-sidebar(70)，
+    # 侧边栏在弹窗打开时仍然可达。
     cdp.js("""(() => {
       const rows = Array.from(document.querySelectorAll('.tree__children .tree__row'));
-      const t = rows.find(r => r.textContent.includes('导数'));
-      if (t) t.id = 'cat-probe';
-      return !!t;
+      const t = rows.find(r => r.textContent.includes('极限'));
+      if (t) t.id = 'cat-same';
+      const o = rows.find(r => r.textContent.includes('导数'));
+      if (o) o.id = 'cat-other';
+      return !!t && !!o;
     })()""")
-    b = cdp.box("#cat-probe")
-    expect("详情关闭后大类行可被命中（遮罩不再挡）",
-           bool(b) and b["same"] is True, b)
-    if b:
-        cdp.click_at(b)
-    time.sleep(2.0)
+    b_same = cdp.box("#cat-same")
+    expect("**详情打开时大类行仍可被命中**（侧边栏已浮到遮罩之上）",
+           bool(b_same) and b_same["same"] is True, b_same)
+
+    # 点**当前**大类（详情里那道题就属于它）-> 详情不该被关掉
+    if b_same:
+        cdp.click_at(b_same)
+    time.sleep(1.8)
+    expect("点当前大类后详情仍然打开（题目还在筛选范围内）",
+           cdp.detail_in_dom() is True)
+    expect("深链接 hash 没被冲掉",
+           (cdp.js("location.hash") or "").startswith("#/questions/q/"),
+           cdp.js("location.hash"))
+
+    # 点**别**的大类（详情里那道题不属于它）-> 详情收起，且筛选真的切过去
+    b_other = cdp.box("#cat-other")
+    expect("另一大类行同样可被命中", bool(b_other) and b_other["same"] is True,
+           b_other)
+    if b_other:
+        cdp.click_at(b_other)
+    expect("点别的大类后详情收起（题目已不在筛选范围内）",
+           cdp.wait_detail(False, 4.0) is True)
     after = cdp.js("""(() => {
       const comp = document.getElementById('app')._vnode.component;
       return JSON.stringify({
@@ -513,7 +530,7 @@ def run_cases(cdp: CDP) -> int:  # noqa: C901
       });
     })()""")
     af = json.loads(after) if (after or "").startswith("{") else {}
-    expect("点大类成功切到「导数」",
+    expect("**筛选真的切到了「导数」**",
            af.get("currentFolderId") == leaf2_id,
            f"folderId={af.get('currentFolderId')} 期望={leaf2_id}")
     expect("工具栏显示新大类名",

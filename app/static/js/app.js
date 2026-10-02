@@ -983,9 +983,21 @@
 
       function toggleFolder(id) { expandedFolders[id] = !expandedFolders[id]; }
 
-      /** 点击二级大类：切换 currentFolderId 并跳到题目页。 */
+      /**
+       * 点击二级大类：切换 currentFolderId 并跳到题目页。
+       *
+       * 模板上用 `@click.stop` —— 现在侧边栏浮在详情遮罩之上
+       * （`.app.has-modal`），点大类的 click 会冒到遮罩上被 `@click.self`
+       * 当成"点遮罩"而关掉详情，所以必须在行这一层拦住。
+       */
       function selectFolder(id) {
         currentFolderId.value = id;
+        // 换到别的大类后，原来那道题若不在新筛选范围内，详情就该收起来 ——
+        // 留着它会显示一道"不在当前列表里"的题，容易让人以为列表坏了。
+        if (questionDetail.open && questionDetail.question
+            && questionDetail.question.folder_id !== id) {
+          closeDetail();
+        }
         go('questions');
       }
 
@@ -2409,6 +2421,12 @@ function trapFocus(event) {
       return {
         // 状态
         currentPage: currentPage,
+        /**
+         * 模板要用它给 `.app` 加 `has-modal` 类，从而把侧边栏抬到弹窗遮罩之上
+         * （`.app.has-modal .sidebar`，见 style.css）。不导出的话这个类永远
+         * 加不上，弹窗一开侧边栏就被遮罩盖住、点不到大类行。
+         */
+        modalIsOpen: modalIsOpen,
         loading: loading,
         loadError: loadError,
         sidebarCollapsed: sidebarCollapsed,

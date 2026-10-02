@@ -154,6 +154,8 @@
   --z-sidebar: 40;
   --z-drawer-mask: 35;
   --z-dropdown: 60;
+  /* 弹窗打开时侧边栏要浮到遮罩(--z-dropdown=60)之上，见 .app.has-modal */
+  --z-modal-sidebar: 70;
   --z-toast: 80;
 }
 
@@ -621,8 +623,21 @@ textarea.input {
               transform var(--dur-sidebar) var(--ease-sidebar);
 }
 
-/* --- 顶部栏（64px，随侧边栏宽度让位）--- */
-.topbar {
+/* 弹窗打开时把侧边栏抬到遮罩之上。
+ *
+ * 为什么需要：遮罩是 `position:fixed; inset:0; z-index:60`，侧边栏只有 40 ——
+ * 弹窗一开，**整个侧边栏都被遮罩盖住、点不到大类行**。想在"看题目详情"的
+ * 同时切大类，就完全做不到（命中测试命中的是 `.modal-mask`）。
+ *
+ * 只抬高侧边栏、不动遮罩：遮罩仍然挡住主内容区（保持模态语义），
+ * 但导航（学科/大类、页面切换）始终可达。这也是弹窗类交互里常见的做法 ——
+ * 侧边栏属于"全局导航"，不该被局部模态劫持。
+ */
+.app.has-modal .sidebar {
+  z-index: var(--z-modal-sidebar);
+}
+
+/* --- 顶部栏（64px，随侧边栏宽度让位）--- */.topbar {
   position: fixed;
   top: 0;
   right: 0;
