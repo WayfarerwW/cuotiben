@@ -576,6 +576,204 @@ def run_cases(cdp: CDP) -> int:  # noqa: C901
         expect("保存成功后物理文件**已被删除**", exists_after_save != "200",
                f"HTTP {exists_after_save}")
 
+    section("文件夹改名 / 删除（requirements 2.2）")
+    # 先建一个新的学科，避免动到种子里别的用例依赖的数据
+    tree = cdp.js("""(async () => {
+      const r = await fetch('/folders/tree').then(r => r.json());
+      return JSON.stringify(r.map(s => ({id: s.id, name: s.name,
+        kids: (s.children || []).map(c => ({id: c.id, name: c.name}))})));
+    })()""")
+    expect("能读到文件夹树", (tree or "").startswith("["), (tree or "")[:120])
+
+    made = cdp.js("""(async () => {
+      const s = await fetch('/folders', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: '待改名学科'})}).then(r => r.json());
+      const c = await fetch('/folders', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: '待删大类', parent_id: s.id})}).then(r => r.json());
+      return JSON.stringify({subject: s.id, cat: c.id});
+    })()""")
+    ids = json.loads(made) if (made or "").startswith("{") else {}
+    expect("已建好用于改名/删除的学科与大类", bool(ids.get("subject")), made)
+    time.sleep(0.8)
+    cdp.js("""(() => {
+      const el = document.getElementById('app');
+      const comp = el && el._vnode && el._vnode.component;
+      comp.setupState.refreshCurrent ? comp.setupState.refreshCurrent() : null;
+      return 'ok';
+    })()""")
+    time.sleep(1.0)
+
+    # ---- 改名：stub window.prompt ----
+    renamed = cdp.js(f"""(async () => {{
+      const el = document.getElementById('app');
+      const comp = el && el._vnode && el._vnode.component;
+      window.prompt = () => '改过名的学科';
+      const subject = (comp.setupState.folderTree || [])
+        .find(s => s.id === {ids.get('subject')});
+      if (!subject) return 'NO_SUBJECT';
+      comp.setupState.renameFolder(subject);
+      await new Promise(r => setTimeout(r, 1800));
+      const tree = await fetch('/folders/tree').then(r => r.json());
+      const hit = tree.find(s => s.id === {ids.get('subject')});
+      return hit ? hit.name : 'MISSING';
+    }})()""")
+    expect("改名后服务端名字确实变了", renamed == "改过名的学科", renamed)
+
+    # ---- 删除：确认框出现 -> 取消 -> 不删 ----
+    ask = cdp.js(f"""(async () => {{
+      const el = document.getElementById('app');
+      const comp = el && el._vnode && el._vnode.component;
+      const subject = (comp.setupState.folderTree || [])
+        .find(s => s.id === {ids.get('subject')});
+      if (!subject) return 'NO_SUBJECT';
+      comp.setupState.removeFolder(subject);
+      await new Promise(r => setTimeout(r, 600));
+      const dlg = document.querySelector('.modal--confirm');
+      return dlg ? 'shown' : 'NO_DIALOG';
+    }})()""")
+    expect("点删除后弹出确认框（不是直接删）", ask == "shown", ask)
+    expect("确认框里有标题", cdp.js(
+        "!!document.getElementById('confirm-title')") is True)
+    expect("确认框说明了不可恢复", "无法恢复" in (cdp.js(
+        "document.getElementById('confirm-msg')"
+        " ? document.getElementById('confirm-msg').textContent"
+        " + (document.querySelector('.confirm__detail')"
+        "    ? document.querySelector('.confirm__detail').textContent : '')"
+        " : ''") or ""),
+        cdp.js("document.querySelector('.confirm__detail')"
+               " ? document.querySelector('.confirm__detail').textContent.trim().slice(0,40)"
+               " : '(无 detail)'"))
+    expect("确认按钮是危险色（删除类操作）",
+           cdp.js("""(() => {
+             const b = Array.from(document.querySelectorAll('.modal--confirm button'))
+               .find(x => x.textContent.trim() === '删除');
+             return b ? b.className.includes('btn--danger') : 'NO_BTN';
+           })()""") is True)
+
+    # 取消 -> 不删
+    cdp.js("""(() => {
+      const b = Array.from(document.querySelectorAll('.modal--confirm button'))
+        .find(x => x.textContent.trim() === '取消');
+      if (b) b.click();
+      return !!b;
+    })()""")
+    time.sleep(1.5)
+    still = cdp.js(f"""fetch('/folders/tree').then(r => r.json())
+      .then(t => t.some(s => s.id === {ids.get('subject')}) ? 'present' : 'gone')""")
+    expect("**取消后文件夹仍在**（没有绕过确认直接删）", still == "present", still)
+    expect("取消后确认框已关闭",
+           cdp.js("!!document.querySelector('.modal--confirm')") is False)
+
+    # Esc 关确认框 -> Promise 不能悬挂
+    cdp.js(f"""(async () => {{
+      const el = document.getElementById('app');
+      const comp = el && el._vnode && el._vnode.component;
+      const subject = (comp.setupState.folderTree || [])
+        .find(s => s.id === {ids.get('subject')});
+      window.__escSettled = 'pending';
+      comp.setupState.removeFolder(subject);
+      await new Promise(r => setTimeout(r, 400));
+      return document.querySelector('.modal--confirm') ? 'shown' : 'NO_DIALOG';
+    }})()""")
+    time.sleep(0.4)
+    cdp.js("""(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
+      return 'esc';
+    })()""")
+    time.sleep(1.0)
+    expect("Esc 能关掉确认框",
+           cdp.js("!!document.querySelector('.modal--confirm')") is False)
+
+    # 确认删除
+    deleted = cdp.js(f"""(async () => {{
+      const el = document.getElementById('app');
+      const comp = el && el._vnode && el._vnode.component;
+      const subject = (comp.setupState.folderTree || [])
+        .find(s => s.id === {ids.get('subject')});
+      if (!subject) return 'NO_SUBJECT';
+      comp.setupState.removeFolder(subject);
+      await new Promise(r => setTimeout(r, 600));
+      const b = Array.from(document.querySelectorAll('.modal--confirm button'))
+        .find(x => x.textContent.trim() === '删除');
+      if (!b) return 'NO_CONFIRM_BTN';
+      b.click();
+      await new Promise(r => setTimeout(r, 2500));
+      const tree = await fetch('/folders/tree').then(r => r.json());
+      return tree.some(s => s.id === {ids.get('subject')}) ? 'still-there' : 'gone';
+    }})()""")
+    expect("确认后文件夹确实被删除（软删除，树里不再出现）",
+           deleted == "gone", deleted)
+    expect("删除后确认框已关闭",
+           cdp.js("!!document.querySelector('.modal--confirm')") is False)
+
+    section("删除带题目的文件夹会先给后果、再带 force")
+    # 建 学科 -> 大类 -> 一道题，然后删大类：这时必须走 force 路径
+    seeded = cdp.js("""(async () => {
+      const s = await fetch('/folders', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: '有题学科'})}).then(r => r.json());
+      const c = await fetch('/folders', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: '有题大类', parent_id: s.id})}).then(r => r.json());
+      await fetch('/questions', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({folder_id: c.id, stem: '占用题', answer: 'a'})});
+      return JSON.stringify({year: 0, cat: c.id});
+    })()""")
+    cat_id = json.loads(seeded)["cat"] if (seeded or "").startswith("{") else None
+    time.sleep(1.0)
+
+    # 等前端树里真的出现这个大类和它的题数（loadFolderTree 是异步的，
+    # 不等就去查会拿到旧树 -> NO_CAT）
+    found = cdp.js(f"""(async () => {{
+      const el = document.getElementById('app');
+      const comp = el && el._vnode && el._vnode.component;
+      for (let i = 0; i < 20; i++) {{
+        // loadFolderTree 没有导出到 setupState，用已导出的 refreshCurrent()
+        await comp.setupState.refreshCurrent();
+        let cat = null;
+        (comp.setupState.folderTree || []).forEach(s => {{
+          (s.children || []).forEach(c => {{ if (c.id === {cat_id}) cat = c; }});
+        }});
+        if (cat && (cat.question_count || 0) > 0) {{
+          return JSON.stringify({{count: cat.question_count}});
+        }}
+        await new Promise(r => setTimeout(r, 300));
+      }}
+      return 'NO_CAT';
+    }})()""")
+    expect("服务端统计到该大类下有题",
+           "count" in (found or "") and '"count":0' not in (found or ""), found)
+
+    dialog_text = cdp.js(f"""(async () => {{
+      const el = document.getElementById('app');
+      const comp = el && el._vnode && el._vnode.component;
+      let cat = null;
+      (comp.setupState.folderTree || []).forEach(s => {{
+        (s.children || []).forEach(c => {{ if (c.id === {cat_id}) cat = c; }});
+      }});
+      if (!cat) return 'NO_CAT';
+      comp.setupState.removeFolder(cat);
+      await new Promise(r => setTimeout(r, 600));
+      const d = document.querySelector('.confirm__detail');
+      return d ? d.textContent.trim() : 'NO_DETAIL';
+    }})()""")
+    expect("有题时确认框说明了「题目会保留」",
+           "保留" in (dialog_text or ""), (dialog_text or "")[:60])
+    expect("确认框写明题目不再属于任何大类",
+           "大类" in (dialog_text or ""), (dialog_text or "")[:60])
+
+    # 取消掉，清理
+    cdp.js("""(() => {
+      const b = Array.from(document.querySelectorAll('.modal--confirm button'))
+        .find(x => x.textContent.trim() === '取消');
+      if (b) b.click();
+      return !!b;
+    })()""")
+    time.sleep(0.6)
+
     print("\n" + "-" * 74)
     print(f"合计 {OK + FAIL} 项，通过 {OK}，失败 {FAIL}")
     for name in FAILED:

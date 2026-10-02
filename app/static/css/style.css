@@ -885,7 +885,8 @@ textarea.input {
 
 /* 学科行右侧的「新建大类」按钮：平时隐藏，悬停或键盘聚焦时才出现。
    用 visibility 而不是 display:none —— 后者会让按钮无法被 Tab 聚焦。 */
-.tree__add {
+.tree__add,
+.tree__act {
   width: 22px;
   height: 22px;
   flex: 0 0 auto;
@@ -895,7 +896,9 @@ textarea.input {
 }
 
 .tree__row:hover .tree__add,
-.tree__add:focus-visible {
+.tree__row:hover .tree__act,
+.tree__add:focus-visible,
+.tree__act:focus-visible {
   visibility: visible;
   opacity: 1;
 }
@@ -1355,6 +1358,29 @@ textarea.input {
   flex: 0 0 auto;
   white-space: nowrap;
   text-decoration: underline;
+}
+
+/* --- 通用确认弹窗 --- */
+/* 确认框内容比表单短，不需要题目弹窗那么宽 */
+.modal--confirm { max-width: 420px; }
+
+.confirm__message {
+  margin: 0;
+  color: var(--c-text);
+  font-size: var(--fs-body);
+}
+
+/* 后果说明（"题目会保留但不再属于任何大类"）用警示色 + 保留换行，
+   因为它讲的是不可撤销的后果，必须让人看清楚。 */
+.confirm__detail {
+  margin: var(--sp-tight) 0 0;
+  padding: var(--sp-tight) var(--sp-compact);
+  border-radius: var(--radius-control);
+  background: var(--c-warning-soft);
+  color: var(--c-warning-text);
+  font-size: var(--fs-aux);
+  line-height: 1.6;
+  white-space: pre-line;
 }
 
 /* 抽屉遮罩（移动端侧边栏）*/

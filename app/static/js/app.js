@@ -394,6 +394,153 @@
         toast(msg, 'error', true);
       }
 
+      /* ---------------- 通用确认弹窗 ---------------- */
+
+      /**
+       * 通用确认框。
+       *
+       * 为什么需要它：改名/删除文件夹、以及"文件夹下还有题目"这类操作
+       * 必须让用户看到**后果**再决定，不能只靠 window.confirm ——
+       * 它的文案是纯文本，放不下"仅删除文件夹/取消"这种带后果说明的选择，
+       * 而且原生弹窗会阻塞、无法用自检驱动。
+       *
+       * 用法：`confirmDialog.ask({...})` 返回 Promise<boolean>。
+       * 监听 Esc / 点遮罩关闭都会 resolve(false)，不会悬挂。
+       */
+      var confirmDialog = reactive({
+        open: false, title: '', message: '', detail: '',
+        confirmLabel: '确定', cancelLabel: '取消',
+        danger: false, busy: false, _resolve: null,
+      });
+
+      function askConfirm(opts) {
+        var o = opts || {};
+        // 如果上一个还没结束就先当作取消，避免 Promise 永远悬挂
+        if (confirmDialog._resolve) {
+          var prev = confirmDialog._resolve;
+          confirmDialog._resolve = null;
+          prev(false);
+        }
+        confirmDialog.title = o.title || '确认操作';
+        confirmDialog.message = o.message || '';
+        confirmDialog.detail = o.detail || '';
+        confirmDialog.confirmLabel = o.confirmLabel || '确定';
+        confirmDialog.cancelLabel = o.cancelLabel || '取消';
+        confirmDialog.danger = !!o.danger;
+        confirmDialog.busy = false;
+        confirmDialog.open = true;
+        rememberFocus();
+        return new Promise(function (resolve) {
+          confirmDialog._resolve = resolve;
+          nextTick(focusIntoModal);
+        });
+      }
+
+      function settleConfirm(value) {
+        var resolve = confirmDialog._resolve;
+        confirmDialog._resolve = null;
+        confirmDialog.open = false;
+        confirmDialog.busy = false;
+        restoreFocus();
+        if (resolve) { resolve(value); }
+      }
+
+      function confirmDialogOk() { settleConfirm(true); }
+      function confirmDialogCancel() { settleConfirm(false); }
+
+      /* ---------------- 文件夹改名 / 删除 ---------------- */
+
+      /** 重命名文件夹（学科或大类）。name 必填，后端传 null 会 422。 */
+      function renameFolder(folder) {
+        if (!folder) { return; }
+        var name = window.prompt('重命名「' + folder.name + '」', folder.name);
+        if (name === null) { return; }            // 用户取消
+        var trimmed = name.trim();
+        if (!trimmed || trimmed === folder.name) { return; }
+        API.updateFolder(folder.id, { name: trimmed })
+          .then(function () {
+            toast('已重命名为「' + trimmed + '」');
+            return loadFolderTree();
+          })
+          .catch(function (err) {
+            // 同一父下同名会 409/422，转成人话
+            if (err && (err.status === 409 || err.status === 422)) {
+              toast('同一层里已经有叫「' + trimmed + '」的了', 'warning', true);
+              return;
+            }
+            toastError(err);
+          });
+      }
+
+      /**
+       * 删除文件夹（软删除，requirements 2.2）。
+       *
+       * **两步走，不直接带 force**：后端在"文件夹（或其子文件夹）下还有
+       * 未删除题目"时会返回 409 拒绝删除，这是刻意的安全设计 ——
+       * 避免静默级联导致题目变成"挂在已删除文件夹上的孤儿"（界面消失了、
+       * 数据还在）。前端要**配合**它：先把后果告诉用户，确认后才带 force。
+       * 前端写死 force=true 等于把这个安全阀绕过去。
+       */
+      function removeFolder(folder) {
+        if (!folder) { return; }
+        var isSubject = folder.level === 1;
+        var kids = folder.children || [];
+        var scope = isSubject
+          ? '学科「' + folder.name + '」及其下 ' + kids.length + ' 个大类'
+          : '大类「' + folder.name + '」';
+        var count = folder.question_count || 0;
+
+        var message = '要删除' + scope + '吗？';
+        // 这里不用 ** 之类的 markdown 记号：文案是纯文本渲染，星号会原样显示
+        var detail = count > 0
+          ? '它下面还有 ' + count + ' 道题。删除后这些题仍会保留，'
+            + '但不再属于任何大类。\n注意：删除后界面上无法恢复。'
+          : '删除后界面上无法恢复。';
+
+        askConfirm({
+          title: '删除文件夹',
+          message: message,
+          detail: detail,
+          confirmLabel: '删除',
+          danger: true,
+        }).then(function (ok) {
+          if (!ok) { return; }
+          doDeleteFolder(folder, count > 0);
+        });
+      }
+
+      function doDeleteFolder(folder, force) {
+        // deleteFolder(folderId, force:boolean, opts) —— 第二参是布尔
+        API.deleteFolder(folder.id, force)
+          .then(function () {
+            toast('已删除「' + folder.name + '」');
+            // 删掉的正是当前筛选的文件夹时，清掉筛选条件，
+            // 否则题目列表会一直按一个已不存在的 id 过滤（看起来像"题全没了"）
+            if (currentFolderId.value === folder.id) {
+              currentFolderId.value = null;
+            }
+            return Promise.all([loadFolderTree(), loadQuestions()]);
+          })
+          .catch(function (err) {
+            if (err && err.status === 409) {
+              // 兜底：本地 question_count 可能过期，服务端才是准的。
+              // 再问一次，确认后带 force 重发。
+              askConfirm({
+                title: '还有题目挂在这个文件夹下',
+                message: '服务端报告它下面仍有题目。',
+                detail: '继续删除只会删掉文件夹本身，题目保持原状不动'
+                  + '（不删除、也不改所属）。\n删除后界面上无法恢复。',
+                confirmLabel: '仍然删除',
+                danger: true,
+              }).then(function (again) {
+                if (again) { doDeleteFolder(folder, true); }
+              });
+              return;
+            }
+            toastError(err);
+          });
+      }
+
       /* ================= 响应式（ui-design 第 7 节）================= */
 
       var MOBILE_MAX = 767;      // < 768 移动端：抽屉
@@ -934,7 +1081,8 @@
       }
 
       function modalIsOpen() {
-        return !!(questionEditor.open || exportDialog.open || previewImage.value);
+        return !!(questionEditor.open || exportDialog.open || previewImage.value
+          || confirmDialog.open);
       }
 
       function anyOverlayOpen() {
@@ -943,6 +1091,10 @@
 
       /** 关闭所有浮层。Esc 与点击外部都走这里，保证行为一致。 */
       function closeOverlays() {
+        // 确认框放最前：它总是最后弹出来的，Esc 应当先关它。
+        // 走 confirmDialogCancel 而不是直接置 open=false ——
+        // 那样 Promise 永远不会 resolve，调用方的 .then 就悬挂了。
+        if (confirmDialog.open) { confirmDialogCancel(); return; }
         if (questionEditor.open) { closeQuestionEditor(); return; }
         if (exportDialog.open) { exportDialog.open = false; restoreFocus(); return; }
         if (previewImage.value) { previewImage.value = null; restoreFocus(); return; }
@@ -1212,8 +1364,9 @@ function trapFocus(event) {
         document.body.style.overflow = locked ? 'hidden' : '';
       }
 
-      // 三类弹窗任一打开即锁滚动。用 watch 而不是散落在各 open/close 里，
-      // 避免将来新增弹窗时漏掉其中一条路径（Esc / 遮罩 / 按钮都要还原）。
+      // 四类弹窗任一打开即锁滚动（题目编辑 / 导出 / 图片预览 / 确认框）。
+      // 用 watch 而不是散落在各 open/close 里，避免将来新增弹窗时漏掉
+      // 其中一条路径（Esc / 遮罩 / 按钮都要还原）。
       watch(modalIsOpen, updateScrollLock);
 
       /** 复习页按 ←/→ 滚动到上/下一张卡片。 */
@@ -2043,6 +2196,11 @@ function trapFocus(event) {
         promptNewSubject: promptNewSubject,
         promptNewCategory: promptNewCategory,
         newCategoryFromEditor: newCategoryFromEditor,
+        renameFolder: renameFolder,
+        removeFolder: removeFolder,
+        confirmDialog: confirmDialog,
+        confirmDialogOk: confirmDialogOk,
+        confirmDialogCancel: confirmDialogCancel,
         onSearchInput: onSearchInput,
         starQuestion: starQuestion,
         removeQuestion: removeQuestion,

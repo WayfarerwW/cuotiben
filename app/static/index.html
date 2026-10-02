@@ -119,12 +119,24 @@
                 <span class="tree__dot" aria-hidden="true"></span>
                 <span class="tree__label">{{ subject.name }}</span>
                 <span class="tree__count num">{{ subject.question_count || 0 }}</span>
-                <!-- 在学科下新建大类：题目只能挂二级大类，没有这个入口就录不进题 -->
+                <!-- 学科行操作：新建大类 / 改名 / 删除（平时隐藏，悬停或键盘聚焦时出现） -->
                 <button class="icon-btn icon-btn--on-dark tree__add" type="button"
                         :aria-label="'在 ' + subject.name + ' 下新建大类'"
                         :title="'在「' + subject.name + '」下新建大类'"
                         @click.stop="promptNewCategory(subject.id)">
                   <svg class="icon icon--sm"><use href="#i-plus"></use></svg>
+                </button>
+                <button class="icon-btn icon-btn--on-dark tree__act" type="button"
+                        :aria-label="'重命名学科 ' + subject.name"
+                        :title="'重命名「' + subject.name + '」'"
+                        @click.stop="renameFolder(subject)">
+                  <svg class="icon icon--sm"><use href="#i-edit"></use></svg>
+                </button>
+                <button class="icon-btn icon-btn--on-dark tree__act" type="button"
+                        :aria-label="'删除学科 ' + subject.name"
+                        :title="'删除「' + subject.name + '」'"
+                        @click.stop="removeFolder(subject)">
+                  <svg class="icon icon--sm"><use href="#i-trash"></use></svg>
                 </button>
               </div>
               <ul class="tree__children" v-if="subject.children && subject.children.length">
@@ -137,6 +149,18 @@
                        @keydown.space.prevent="selectFolder(cat.id)">
                     <span class="tree__label">{{ cat.name }}</span>
                     <span class="tree__count num">{{ cat.question_count || 0 }}</span>
+                    <button class="icon-btn icon-btn--on-dark tree__act" type="button"
+                            :aria-label="'重命名大类 ' + cat.name"
+                            :title="'重命名「' + cat.name + '」'"
+                            @click.stop="renameFolder(cat)">
+                      <svg class="icon icon--sm"><use href="#i-edit"></use></svg>
+                    </button>
+                    <button class="icon-btn icon-btn--on-dark tree__act" type="button"
+                            :aria-label="'删除大类 ' + cat.name"
+                            :title="'删除「' + cat.name + '」'"
+                            @click.stop="removeFolder(cat)">
+                      <svg class="icon icon--sm"><use href="#i-trash"></use></svg>
+                    </button>
                   </div>
                 </li>
               </ul>
@@ -1190,6 +1214,37 @@
     -->
     <div class="visually-hidden" role="status" aria-live="polite"
          aria-atomic="true">{{ liveMessage }}</div>
+
+    <!-- ===================== 通用确认弹窗 ===================== -->
+    <div v-if="confirmDialog.open" class="modal-mask" @mousedown.self.prevent
+         @click.self="confirmDialogCancel">
+      <div class="modal modal--confirm" role="dialog" aria-modal="true"
+           aria-labelledby="confirm-title" aria-describedby="confirm-msg">
+        <div class="modal__head">
+          <h2 class="card-title" id="confirm-title">{{ confirmDialog.title }}</h2>
+          <button class="icon-btn" type="button" aria-label="关闭"
+                  @click="confirmDialogCancel">
+            <svg class="icon icon--sm"><use href="#i-close"></use></svg>
+          </button>
+        </div>
+        <div class="modal__body">
+          <p id="confirm-msg" class="confirm__message">{{ confirmDialog.message }}</p>
+          <!-- 后果说明（如"题目会保留但不再属于任何大类"）用 alert 语义，
+               读屏会读到，视觉上也与普通说明区分 -->
+          <p v-if="confirmDialog.detail" role="alert" class="confirm__detail">
+            {{ confirmDialog.detail }}
+          </p>
+        </div>
+        <div class="modal__foot">
+          <button class="btn btn--secondary" type="button"
+                  @click="confirmDialogCancel">{{ confirmDialog.cancelLabel }}</button>
+          <button class="btn" :class="confirmDialog.danger ? 'btn--danger' : 'btn--primary'"
+                  type="button" @click="confirmDialogOk">
+            {{ confirmDialog.confirmLabel }}
+          </button>
+        </div>
+      </div>
+    </div>
 
     <!-- 图片预览 -->
     <div v-if="previewImage" class="modal-mask lightbox" @click.self="previewImage = null">
