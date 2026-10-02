@@ -12,6 +12,11 @@ __pycache__/
 *.pyc
 node_modules/
 
+# --- 本地运行产物 ---
+# 后台启服务时的日志重定向目标（run.py / start.bat 都可能写到这里）
+_server.log
+*.log
+
 # --- PoC / 验证脚本的运行产物（可随时重新生成，不入库）---
 poc_out/
 
