@@ -739,6 +739,81 @@
           .then(function () { dataBusy.value = false; dataBusyKind.value = ''; });
       }
 
+      /* ---------------- 孤儿图片 ---------------- */
+
+      /** 孤儿图片列表与统计（数据说明页显示）。 */
+      var orphans = reactive({ count: 0, total_bytes: 0, files: [], note: '' });
+      var orphanBusy = ref(false);
+
+      function fmtBytes(n) {
+        var v = Number(n) || 0;
+        if (v < 1024) { return v + ' B'; }
+        if (v < 1024 * 1024) { return (v / 1024).toFixed(1) + ' KB'; }
+        return (v / 1024 / 1024).toFixed(1) + ' MB';
+      }
+
+      /**
+       * 刷新孤儿图片列表。
+       *
+       * 孤儿 = uploads/ 下存在、但没有任何未删除题目在引用的文件。
+       * 典型来源：上传后没保存就关掉弹窗 —— 那种情况下 "保存成功后删除"
+       * 的逻辑根本没机会跑，文件就留在磁盘上了。必须有个地方能收掉它们。
+       */
+      function loadOrphans() {
+        orphanBusy.value = true;
+        return API.getOrphanImages()
+          .then(function (res) {
+            orphans.count = res.count || 0;
+            orphans.total_bytes = res.total_bytes || 0;
+            orphans.files = res.files || [];
+            orphans.note = res.note || '';
+          })
+          .catch(function (err) {
+            dataError.value = err && err.message ? err.message : '读取孤儿图片失败';
+          })
+          .then(function () { orphanBusy.value = false; });
+      }
+
+      /** 清理孤儿图片。**二次确认**后才真的删 —— 删除不可撤销。 */
+      function doCleanupOrphans() {
+        if (!orphans.count) {
+          toast('没有需要清理的孤儿图片', 'warning');
+          return;
+        }
+        askConfirm({
+          title: '清理孤儿图片',
+          message: '将删除 ' + orphans.count + ' 个没有被任何题目引用的图片文件，'
+            + '共 ' + fmtBytes(orphans.total_bytes) + '。',
+          detail: '只删除这些未被引用的文件，不会动任何题目、也不会动被题目引用的图片。\n'
+            + '注意：删除后无法恢复。',
+          confirmLabel: '清理',
+          danger: true,
+        }).then(function (ok) {
+          if (!ok) { return; }
+          orphanBusy.value = true;
+          dataMessage.value = '';
+          dataError.value = '';
+          API.cleanupOrphanImages()
+            .then(function (res) {
+              dataMessage.value = '已清理 ' + res.deleted + ' 个文件，'
+                + '释放 ' + fmtBytes(res.freed_bytes)
+                + (res.failed ? ('；' + res.failed + ' 个删除失败') : '');
+              if (res.failed) {
+                dataError.value = '有 ' + res.failed + ' 个文件删除失败，'
+                  + '可能被其它程序占用：' + (res.failed_files || []).join('、');
+              }
+              announce('已清理 ' + res.deleted + ' 个孤儿图片');
+              toast('已清理 ' + res.deleted + ' 个文件');
+              return Promise.all([loadOrphans(), loadDataPaths()]);
+            })
+            .catch(function (err) {
+              dataError.value = err && err.message ? err.message : '清理失败';
+              toastError(err);
+            })
+            .then(function () { orphanBusy.value = false; });
+        });
+      }
+
       function loadSettings() {
         return API.getSettings().then(function (s) {
           if (!s) { return; }
@@ -788,7 +863,7 @@
           // 复位上一次的备份/导出提示，避免残留上一条结果看起来像本次的
           dataMessage.value = '';
           dataError.value = '';
-          jobs.push(loadHealth(), loadDataPaths());
+          jobs.push(loadHealth(), loadDataPaths(), loadOrphans());
           loadDraftKeyList();
         }
         return Promise.all(jobs)
@@ -2122,6 +2197,11 @@ function trapFocus(event) {
         dataError: dataError,
         doBackup: doBackup,
         doExportData: doExportData,
+        orphans: orphans,
+        orphanBusy: orphanBusy,
+        fmtBytes: fmtBytes,
+        loadOrphans: loadOrphans,
+        doCleanupOrphans: doCleanupOrphans,
         reviewDoneToday: reviewDoneToday,
         reviewPercent: reviewPercent,
         masteryRate: masteryRate,

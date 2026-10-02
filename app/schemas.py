@@ -696,3 +696,44 @@ class SyncRunOut(BaseModel):
     pushed: bool = False
     message: str = ""
     reason: str = ""
+
+
+# --------------------------------------------------------------------------
+# 孤儿图片清理（requirements 4.4）
+# --------------------------------------------------------------------------
+
+
+class OrphanImageOut(BaseModel):
+    """一个孤儿图片文件。"""
+
+    file_path: str
+    url: str
+    size: int
+
+
+class OrphanListOut(BaseModel):
+    """GET /upload/orphans。
+
+    `total_bytes` 让界面直接显示"可释放多少空间"，前端不必自己累加。
+    `note` 说明什么算孤儿 —— 否则用户会以为列出来的都是垃圾文件。
+    """
+
+    count: int
+    total_bytes: int
+    files: list[OrphanImageOut] = Field(default_factory=list)
+    note: str = ""
+
+
+class OrphanCleanupOut(BaseModel):
+    """POST /upload/cleanup 的结果。
+
+    `failed` 单独报出来：删不掉的文件（被占用、权限）要让人知道，
+    不能只报 deleted 让用户以为全清干净了。
+    """
+
+    found: int
+    deleted: int
+    failed: int
+    freed_bytes: int
+    deleted_files: list[str] = Field(default_factory=list)
+    failed_files: list[str] = Field(default_factory=list)

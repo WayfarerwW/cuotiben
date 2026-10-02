@@ -12,12 +12,19 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PIL import Image, ImageOps
+from sqlalchemy import select
+
+if TYPE_CHECKING:
+    # 只为类型标注；运行时按需 import，避免 services 与 models 循环导入
+    from sqlalchemy.orm import Session
 
 # HEIC 支持：必须在任何 Image.open 之前注册（AGENTS.md 4.4）
 try:
@@ -32,7 +39,26 @@ logger = logging.getLogger(__name__)
 
 # 项目根：app/services/image_service.py -> app/services -> app -> 根
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-UPLOADS_DIR = PROJECT_ROOT / "uploads"
+
+
+def _uploads_dir() -> Path:
+    """图片目录：环境变量优先，否则项目下的 uploads/。
+
+    为什么必须可覆盖（这不是为了生产，是为了**自检的安全**）：
+    本模块的孤儿清理会真删文件。自检如果要跑这条路径，就必须能把
+    UPLOADS_DIR 指到临时目录 —— 否则测的是用户真实的 uploads/。
+    这一点是被实际事故教育出来的：`tools/verify_orphans.py` 第一版以为
+    设了环境变量就隔离了，但本模块当时**根本不读**它，结果 cleanup
+    把真实 uploads/ 清空，4 张被题目引用的图片被误删且无法恢复。
+
+    data_service 一直用 `CUOTIBEN_UPLOADS_DIR` / `CUOTIBEN_BACKUPS_DIR`，
+    这里对齐同一个环境变量名。
+    """
+    raw = os.environ.get("CUOTIBEN_UPLOADS_DIR")
+    return Path(raw) if raw else PROJECT_ROOT / "uploads"
+
+
+UPLOADS_DIR = _uploads_dir()
 # 静态挂载前缀，必须与 main.py 的 app.mount 一致
 UPLOADS_URL_PREFIX = "/uploads"
 
@@ -304,3 +330,123 @@ def delete_file(stored_path: str) -> bool:
     except Exception:  # noqa: BLE001
         logger.warning("删除图片文件失败：%s", stored_path, exc_info=True)
         return False
+
+
+# --------------------------------------------------------------------------
+# 孤儿图片：磁盘上有、但没有任何"活着的"题目在引用
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class OrphanImage:
+    """一个孤儿图片文件。"""
+
+    file_path: str          # 库内相对路径，如 uploads/2026/10/02/x.jpg
+    url: str                # 可直接访问的地址
+    size: int               # 字节
+
+
+def _is_inside_uploads(path: Path) -> bool:
+    """路径解析后必须仍在 uploads/ 之内（防目录穿越）。"""
+    try:
+        return path.resolve().is_relative_to(UPLOADS_DIR.resolve())
+    except OSError:
+        return False
+
+
+def scan_orphans(db: Session) -> list[OrphanImage]:
+    """列出 uploads/ 下所有孤儿图片。
+
+    **孤儿 = 磁盘上存在，但没有任何未删除题目在引用它。**
+
+    判定规则（三类，别只看字段名）：
+      1. 被某道**未删除**题目引用 -> **不是**孤儿（正常在用）
+      2. 挂在**已软删除**题目上 -> **是**孤儿。
+         题目在界面上已经看不见、也没有还原入口（本项目软删除不承诺可恢复），
+         图片永远不会再被渲染，留着只占磁盘。
+      3. `question_id` 为 NULL，或完全没有 question_images 记录 -> **是**孤儿。
+         前者是上传后从未拿去建题，后者是上传后没保存就关掉了弹窗。
+
+    注意 `.gitkeep` 永远跳过（目录占位，不是图片）。
+
+    这个语义与 `POST /upload/cleanup` 一致：列出来的就会被删。
+    只读，不删任何东西。
+    """
+    from ..models import Question, QuestionImage
+
+    # 1) 所有活着的题目 id（软删除的不算）
+    alive_ids = set(db.scalars(
+        select(Question.id).where(Question.deleted_at.is_(None))
+    ).all())
+
+    # 2) 磁盘上的文件（递归，但只在 uploads/ 内）
+    on_disk: dict[str, int] = {}
+    if UPLOADS_DIR.is_dir():
+        for item in UPLOADS_DIR.rglob("*"):
+            if not item.is_file():
+                continue
+            if item.name == ".gitkeep":
+                continue                     # 目录占位文件，永远保留
+            if not _is_inside_uploads(item):
+                continue
+            rel = item.relative_to(UPLOADS_DIR).as_posix()
+            try:
+                on_disk[rel] = item.stat().st_size
+            except OSError:
+                continue
+
+    # 3) 被"活着的题目"引用的文件相对路径
+    referenced: set[str] = set()
+    for row in db.scalars(select(QuestionImage)).all():
+        if row.question_id is None or row.question_id not in alive_ids:
+            continue                          # 未挂题 / 挂在已删除题上 -> 不算引用
+        path = absolute_path_of(row.file_path)
+        if not _is_inside_uploads(path):
+            continue
+        try:
+            referenced.add(path.relative_to(UPLOADS_DIR).as_posix())
+        except ValueError:                    # pragma: no cover
+            continue
+
+    orphans = [
+        OrphanImage(
+            file_path=f"uploads/{rel}",
+            url=url_for(f"uploads/{rel}"),
+            size=size,
+        )
+        for rel, size in sorted(on_disk.items())
+        if rel not in referenced
+    ]
+    return orphans
+
+
+def cleanup_orphans(db: Session) -> dict:
+    """删除所有孤儿图片的物理文件，返回清理结果。
+
+    先扫再删都在同一次调用里完成，避免"扫完到删之间"文件被别处引用的竞态
+    （本地单机、单用户，这个窗口可以忽略，但保持"删的就是刚扫出来的那批"）。
+
+    删除单个文件失败不中断整体：逐个记录结果，返回成功/失败计数。
+    """
+    orphans = scan_orphans(db)
+    deleted: list[str] = []
+    failed: list[str] = []
+    freed = 0
+
+    for orphan in orphans:
+        # 再走一次 delete_file：它内部还有一层 uploads/ 目录穿越防护，
+        # 是最后的保险 —— 这里不直接 unlink。
+        if delete_file(orphan.file_path):
+            deleted.append(orphan.file_path)
+            freed += orphan.size
+        else:
+            failed.append(orphan.file_path)
+
+    return {
+        "found": len(orphans),
+        "deleted": len(deleted),
+        "failed": len(failed),
+        "freed_bytes": freed,
+        "deleted_files": deleted,
+        "failed_files": failed,
+    }

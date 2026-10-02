@@ -474,6 +474,20 @@
     exportDataJson: function (opts) {
       return request('/data/export', Object.assign({ responseType: 'blob' }, opts));
     },
+    /**
+     * 列出孤儿图片（uploads/ 下没有任何未删除题目引用的文件）。
+     * 返回 { count, total_bytes, files: [{file_path, url, size}], note }。**只读**。
+     */
+    getOrphanImages: function (opts) {
+      return request('/upload/orphans', opts);
+    },
+    /**
+     * 清理孤儿图片，返回 { found, deleted, failed, freed_bytes, ... }。
+     * 服务端会校验路径必须仍在 uploads/ 之内（防目录穿越）。
+     */
+    cleanupOrphanImages: function (opts) {
+      return request('/upload/cleanup', Object.assign({ method: 'POST' }, opts));
+    },
   };
 
   /* ======================= 其它（未在本步要求内，按需使用）======================= */
@@ -572,6 +586,8 @@
     getDataPaths: dataApi.getPaths,
     createBackup: dataApi.createBackup,
     exportDataJson: dataApi.exportDataJson,
+    getOrphanImages: dataApi.getOrphanImages,
+    cleanupOrphanImages: dataApi.cleanupOrphanImages,
 
     getHealth: misc.getHealth,
     uploadImage: misc.uploadImage,

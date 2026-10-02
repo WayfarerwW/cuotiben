@@ -1900,6 +1900,23 @@ textarea.input {
   font-size: var(--fs-aux);
 }
 
+/* --- 数据说明页：孤儿图片清单 --- */
+.orphan-list {
+  margin-top: var(--sp-tight);
+  color: var(--c-text-muted);
+  font-size: var(--fs-aux);
+}
+
+.orphan-list summary {
+  cursor: pointer;
+  color: var(--c-primary-text);
+}
+
+/* 路径可能很长，允许在任意位置断行，避免撑破卡片 */
+.orphan-list code {
+  word-break: break-all;
+}
+
 /* --- 题目图片（题干图 / 答案图）--- */
 .img-field {
   display: flex;
