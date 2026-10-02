@@ -212,6 +212,34 @@ def main() -> int:  # noqa: C901
         expect("清理后没有孤儿了", r2.json()["count"] == 0, r2.json()["count"])
 
         # ---------------------------------------------------------------
+        section("UPLOADS_DIR 可覆盖（隔离能力本身要有人守）")
+        # 这条是被一次实际事故教育出来的：
+        # image_service 以前**不读** CUOTIBEN_UPLOADS_DIR，本自检以为隔离了，
+        # 实际扫描真实 uploads/ 并清空，4 张被引用的图被误删。
+        # 另外 save_upload 以前写成 absolute.relative_to(PROJECT_ROOT)，
+        # 只在 uploads/ 位于项目根下时才成立；UPLOADS_DIR 一被指到项目外
+        # 就抛 ValueError -> 上传 500。两条都必须有断言守着。
+        expect("image_service 读了 CUOTIBEN_UPLOADS_DIR",
+               svc.UPLOADS_DIR.resolve() == _UPLOADS.resolve(),
+               str(svc.UPLOADS_DIR))
+        rel, ab = svc.save_upload(b"\xff\xd8\xff\xe0payload", ".jpg")
+        expect("UPLOADS_DIR 在项目外时 save_upload 不抛异常", True, rel)
+        expect("返回的相对路径以 uploads/ 开头",
+               rel.startswith("uploads/"), rel)
+        expect("文件写到了指定的 uploads 目录",
+               ab.is_file() and ab.resolve().is_relative_to(_UPLOADS.resolve()),
+               str(ab))
+        expect("**relative_path 能被 absolute_path_of 解析回同一文件**"
+               "（存/取对称）",
+               svc.absolute_path_of(rel).resolve() == ab.resolve(),
+               f"解析={svc.absolute_path_of(rel).name} 期望={ab.name}")
+        expect("url_for 给出可访问的 /uploads/... 地址",
+               svc.url_for(rel).startswith("/uploads/"), svc.url_for(rel))
+        expect("这个刚上传的文件是孤儿（还没挂到题目上）",
+               rel in [o.file_path.replace("\\", "/") for o in svc.scan_orphans(
+                   SessionLocal())])
+
+        # ---------------------------------------------------------------
         section("防目录穿越")
         # 造一条 file_path 指向 uploads 之外的记录：即便被当成孤儿，
         # 也不允许删除（delete_file 内部的 uploads/ 校验是最后一道防线）

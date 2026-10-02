@@ -262,10 +262,24 @@ def _normalize_image_key(raw: str) -> str:
 
     前端可能传 `/uploads/2026/10/01/x.jpg`（上传接口返回的 url），
     也可能传 `uploads/2026/10/01/x.jpg`（file_path），两者是同一张图。
+
+    **基准是 UPLOADS_DIR，不是 PROJECT_ROOT**：uploads/ 可以被
+    `CUOTIBEN_UPLOADS_DIR` 指到项目之外（自检就靠这个隔离），
+    那时 `relative_to(PROJECT_ROOT)` 会抛 ValueError 让建题 500。
+    这里与 `image_service.save_upload` 的写入侧保持同一个基准，
+    保证"写进去的键"和"比对用的键"一致。
     """
-    return image_service.absolute_path_of(raw).relative_to(
-        image_service.PROJECT_ROOT
-    ).as_posix()
+    absolute = image_service.absolute_path_of(raw)
+    try:
+        tail = absolute.relative_to(image_service.UPLOADS_DIR).as_posix()
+    except ValueError:
+        # 不在 UPLOADS_DIR 内：退回"去掉前缀"的写法，避免抛异常。
+        # 这种情况本就该由调用方校验，比对键只需稳定、不要求可解析。
+        tail = str(raw).replace("\\", "/").lstrip("/")
+        prefix = image_service.UPLOADS_URL_PREFIX.strip("/")
+        if tail.startswith(prefix + "/"):
+            tail = tail[len(prefix) + 1:]
+    return f"{image_service.UPLOADS_URL_PREFIX.strip('/')}/{tail}"
 
 
 #: 同一张图不能既当题干图又当答案图？其实可以（同一张图两面都用是合理的），

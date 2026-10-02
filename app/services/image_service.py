@@ -245,13 +245,28 @@ def save_upload(
 
     相对路径形如 uploads/2026/10/01/{uuid}.jpg，与需求 2.6 一致，
     也是写进 question_images.file_path 的值。
+
+    **入库路径一律以 "uploads/" 开头**，不能写成 `absolute.relative_to(
+    PROJECT_ROOT)` —— 那样只在 uploads/ 恰好位于项目根下时才成立。
+    UPLOADS_DIR 可被 `CUOTIBEN_UPLOADS_DIR` 覆盖到项目之外（自检就靠这个
+    隔离，见本模块 `_uploads_dir` 的说明），那时 relative_to(PROJECT_ROOT)
+    会直接抛 ValueError，上传 500。
+
+    改成对 UPLOADS_DIR 求相对路径，与 `absolute_path_of` / `delete_file`
+    的解析逻辑对称：**存的是 uploads/ 之后的片段，前面恒定加 uploads/**。
     """
     directory = storage_dir(now)
     directory.mkdir(parents=True, exist_ok=True)
     filename = f"{uuid.uuid4().hex}{ext}"
     absolute = directory / filename
     absolute.write_bytes(data)
-    relative = absolute.relative_to(PROJECT_ROOT).as_posix()
+    # 相对 UPLOADS_DIR 求片段，再拼上前缀；up 到外面时退回文件名，
+    # 保证永远不抛异常（宁可路径兜底，也不让上传失败）
+    try:
+        tail = absolute.relative_to(UPLOADS_DIR).as_posix()
+    except ValueError:  # pragma: no cover - UPLOADS_DIR 之外的存放位置
+        tail = absolute.name
+    relative = f"{UPLOADS_URL_PREFIX.lstrip('/')}/{tail}"
     return relative, absolute
 
 
