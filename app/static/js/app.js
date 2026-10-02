@@ -952,12 +952,19 @@
           dataError.value = '';
           API.cleanupOrphanImages()
             .then(function (res) {
+              // deleted_rows = 同时清掉的 question_images 记录数。
+              // 库里可能留着"指向已不存在文件"的死记录（旧实现只删文件、
+              // 不删记录，而扫描按磁盘文件枚举，看不到它们），
+              // 所以这里要把"记录也清了"讲出来。
+              var rows = res.deleted_rows || 0;
               dataMessage.value = '已清理 ' + res.deleted + ' 个文件，'
                 + '释放 ' + fmtBytes(res.freed_bytes)
+                + (rows ? ('；同时清理 ' + rows + ' 条失效的图片记录') : '')
                 + (res.failed ? ('；' + res.failed + ' 个删除失败') : '');
               if (res.failed) {
                 dataError.value = '有 ' + res.failed + ' 个文件删除失败，'
-                  + '可能被其它程序占用：' + (res.failed_files || []).join('、');
+                  + '可能被其它程序占用：' + (res.failed_files || []).join('、')
+                  + '。这些文件的记录已保留，下次清理会再试。';
               }
               announce('已清理 ' + res.deleted + ' 个孤儿图片');
               toast('已清理 ' + res.deleted + ' 个文件');

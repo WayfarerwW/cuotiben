@@ -201,6 +201,34 @@ def main() -> int:  # noqa: C901
         expect("**uploads 之外的文件未被碰**",
                outside.is_file() and outside.read_bytes() == b"SECRET" * 10)
 
+        # ---------------------------------------------------------------
+        section("清理后的数据库记录（不只是删文件）")
+        # 曾经的缺陷：cleanup 删了物理文件，却把 question_images 记录留着，
+        # 于是库里累积一批"指向不存在文件"的死记录。更糟的是
+        # scan_orphans 是按**磁盘文件**枚举的，这种死记录它根本看不到
+        # —— 没有任何清理通道，只会越积越多。
+        db2 = SessionLocal()
+        try:
+            rows = db2.query(QuestionImage).all()
+            by_path = {r.file_path: r for r in rows}
+            alive_ref_path = f"uploads/2026/10/02/{keep_ref.name}"
+            unbound_path = f"uploads/2026/10/02/{orphan_unbound.name}"
+            deadq_path = f"uploads/2026/10/02/{keep_deleted_q.name}"
+
+            expect("**未挂题的图片记录已被删除**",
+                   unbound_path not in by_path, sorted(by_path))
+            expect("**挂在已删除题目上的图片记录已被删除**",
+                   deadq_path not in by_path, sorted(by_path))
+            expect("**被活着的题目引用的记录保留**",
+                   alive_ref_path in by_path, sorted(by_path))
+            expect("**库里不再有指向不存在文件的记录**",
+                   all(Path(r.file_path).name not in {
+                       orphan_no_row.name, orphan_unbound.name,
+                       keep_deleted_q.name} for r in rows),
+                   [r.file_path for r in rows])
+        finally:
+            db2.close()
+
         # 被引用那张图应当仍是"有人用"的：再清一次也不该动它
         r_again = client.post("/upload/cleanup")
         expect("再清一次不会动被引用的图",
@@ -210,6 +238,46 @@ def main() -> int:  # noqa: C901
         # 清理后再扫应当为 0
         r2 = client.get("/upload/orphans")
         expect("清理后没有孤儿了", r2.json()["count"] == 0, r2.json()["count"])
+
+        # ---------------------------------------------------------------
+        section("文件已不在磁盘、记录还留着的死记录")
+        # 这正是用户库里实际出现的状态（清理删了文件、记录留着）。
+        # scan_orphans 按磁盘文件枚举，**看不到**这种记录，
+        # 所以必须由 cleanup 主动收掉，否则永远没有任何清理通道。
+        db3 = SessionLocal()
+        try:
+            from app.services import image_service as _svc
+
+            missing_path = "uploads/2026/10/02/already_gone_from_disk.jpg"
+            stale = QuestionImage(
+                question_id=None, file_path=missing_path,
+                sort_order=0, kind="stem")
+            db3.add(stale)
+            db3.commit()
+            stale_id = stale.id
+
+            scanned = {o.file_path for o in _svc.scan_orphans(db3)}
+            expect("（准备）死记录不在 scan_orphans 结果里（它按磁盘枚举）",
+                   missing_path not in scanned, sorted(scanned))
+        finally:
+            db3.close()
+
+        r3 = client.post("/upload/cleanup")
+        expect("清理不报错（没有可删的文件也不会崩）",
+               r3.status_code == 200, r3.status_code)
+        db4 = SessionLocal()
+        try:
+            left = db4.get(QuestionImage, stale_id)
+            expect("**文件已不存在的死记录也被清理掉了**",
+                   left is None, f"记录仍在：{left.file_path if left else ''}")
+            # 被活题引用的那条记录必须还在
+            alive_ref = db4.query(QuestionImage).filter(
+                QuestionImage.file_path ==
+                f"uploads/2026/10/02/{keep_ref.name}").count()
+            expect("**清理死记录时没有误删被引用的记录**",
+                   alive_ref == 1, alive_ref)
+        finally:
+            db4.close()
 
         # ---------------------------------------------------------------
         section("UPLOADS_DIR 可覆盖（隔离能力本身要有人守）")

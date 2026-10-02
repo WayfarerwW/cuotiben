@@ -613,10 +613,18 @@ GET	/upload/orphans	列出孤儿图片（只读）
 POST	/upload/cleanup	清理孤儿图片
 
 `POST /upload/cleanup` 响应字段：
-`found`、`deleted`、`failed`、`freed_bytes`、`deleted_files`、`failed_files`
+`found`、`deleted`、`failed`、`freed_bytes`、`deleted_rows`、
+`deleted_files`、`failed_files`
 
 - `failed` 单独报出来：删不掉的文件（被占用、权限）必须让人知道，
   不能只报 `deleted` 让用户以为全清干净了。
+- **清理同时删除物理文件与对应的 `question_images` 记录**（`deleted_rows`
+  是清掉的记录数）。为什么记录也必须删：只删文件会在库里留下
+  "指向已不存在文件"的死记录，而 `GET /upload/orphans` 是**按磁盘文件枚举**的，
+  看不到这种记录 —— 于是它们没有任何清理通道，只会不断累积。
+  真实出现过：清理跑完，库里仍留着 4 条指向已不存在文件的记录。
+- **文件删除失败时保留它的记录**：否则会留下一个再也无人指向、
+  因而永远清不掉的文件（下次清理会再试）。
 - **防目录穿越**：扫描与删除两层都校验路径解析后必须仍在 `uploads/` 之内；
   实际 unlink 走 `image_service.delete_file`，它内部还有一层同样的检查。
 

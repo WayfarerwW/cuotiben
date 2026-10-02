@@ -748,11 +748,16 @@ class OrphanCleanupOut(BaseModel):
 
     `failed` 单独报出来：删不掉的文件（被占用、权限）要让人知道，
     不能只报 deleted 让用户以为全清干净了。
+
+    `deleted_rows` 是同时清掉的 `question_images` 记录数。为什么要报出来：
+    数据库里可能留着"指向已不存在文件"的死记录（旧实现只删文件、不删记录），
+    这种记录 `scan_orphans` 看不到（它按磁盘文件枚举），只能由 cleanup 收掉。
     """
 
     found: int
     deleted: int
     failed: int
     freed_bytes: int
+    deleted_rows: int = 0
     deleted_files: list[str] = Field(default_factory=list)
     failed_files: list[str] = Field(default_factory=list)

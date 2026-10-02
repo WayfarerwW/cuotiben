@@ -435,14 +435,57 @@ def scan_orphans(db: Session) -> list[OrphanImage]:
     return orphans
 
 
+def _orphan_row_ids(db: Session, *, skip_paths: set[str] | None = None) -> list[int]:
+    """找出**该删的 `question_images` 记录**（孤儿记录）。
+
+    为什么必须单独做这件事，而不是靠 `scan_orphans`：
+
+    `scan_orphans` 是**按磁盘文件**枚举的（`UPLOADS_DIR.rglob`）。所以
+    "文件已经不在了、记录还留着"的死记录它**根本看不到** ——
+    只删文件的旧实现会不断累积这种记录，而且没有任何清理通道。
+    用户库里真实出现过：清理跑完，`question_images` 还留着 4 条
+    指向已不存在文件的记录。
+
+    判定与 `scan_orphans` 保持一致（同一个"什么算孤儿"的语义）：
+      - 挂在**未删除**题目上 -> 保留
+      - 挂在**已软删除**题目上 -> 删
+      - `question_id` 为 NULL -> 删
+
+    `skip_paths` 用于"物理文件删除失败"的情况：文件还在，记录就不能删，
+    否则会留下一个删不掉的文件且再也没有记录指向它。
+    """
+    from ..models import Question, QuestionImage
+
+    alive_ids = set(db.scalars(
+        select(Question.id).where(Question.deleted_at.is_(None))
+    ).all())
+    skip = skip_paths or set()
+
+    doomed: list[int] = []
+    for row in db.scalars(select(QuestionImage)).all():
+        if row.file_path in skip:
+            continue
+        if row.question_id is not None and row.question_id in alive_ids:
+            continue                      # 活题在用，保留
+        doomed.append(row.id)
+    return doomed
+
+
 def cleanup_orphans(db: Session) -> dict:
-    """删除所有孤儿图片的物理文件，返回清理结果。
+    """删除所有孤儿图片的**物理文件与其数据库记录**，返回清理结果。
 
     先扫再删都在同一次调用里完成，避免"扫完到删之间"文件被别处引用的竞态
     （本地单机、单用户，这个窗口可以忽略，但保持"删的就是刚扫出来的那批"）。
 
     删除单个文件失败不中断整体：逐个记录结果，返回成功/失败计数。
+    删除失败的文件**其记录也保留** —— 否则会留下一个再也无人指向、
+    因而永远清不掉的文件。
+
+    除文件之外还会收掉"孤儿记录"（挂在已删除题目上 / 未挂题 / 文件已不存在）——
+    详见 `_orphan_row_ids` 里为什么这一步不能省。
     """
+    from ..models import QuestionImage
+
     orphans = scan_orphans(db)
     deleted: list[str] = []
     failed: list[str] = []
@@ -457,11 +500,21 @@ def cleanup_orphans(db: Session) -> dict:
         else:
             failed.append(orphan.file_path)
 
+    # 记录清理：删掉那些"不该再被引用"的记录。
+    # 删除失败的文件要通过 skip_paths 保住它的记录。
+    doomed = _orphan_row_ids(db, skip_paths=set(failed))
+    if doomed:
+        db.query(QuestionImage).filter(
+            QuestionImage.id.in_(doomed)
+        ).delete(synchronize_session=False)
+        db.commit()
+
     return {
         "found": len(orphans),
         "deleted": len(deleted),
         "failed": len(failed),
         "freed_bytes": freed,
+        "deleted_rows": len(doomed),
         "deleted_files": deleted,
         "failed_files": failed,
     }
