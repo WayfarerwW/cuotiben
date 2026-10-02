@@ -16,6 +16,7 @@ from __future__ import annotations
 import concurrent.futures as cf
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -66,6 +67,32 @@ def call(method: str, path: str, payload: dict | None = None, timeout: float = 1
         return exc.code, dict(exc.headers), exc.read()
 
 
+def _upload_jpeg(name: str, color: tuple = (30, 60, 200)) -> dict:
+    """走真实上传接口传一张图，返回上传响应。
+
+    **必须走这个接口**，不能自己往 uploads/ 里写文件：真实上传会落到
+    `uploads/YYYY/MM/DD/` 日期分片目录，而"平铺在 uploads/ 根下"这种
+    形态恰好绕过了导出解析图片的那个 bug（见 _image_uri 的说明）。
+    用户遇到的 500 正是分片路径触发的。
+    """
+    import io as _io
+
+    from PIL import Image
+
+    buf = _io.BytesIO()
+    Image.new("RGB", (60, 40), color).save(buf, "JPEG", quality=88)
+    boundary = "----http" + str(int(time.time() * 1000))
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{name}"\r\n'
+        "Content-Type: image/jpeg\r\n\r\n"
+    ).encode() + buf.getvalue() + f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(BASE + "/upload/image", data=body, method="POST")
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    with _opener.open(req, timeout=60) as resp:
+        return json.loads(resp.read())
+
+
 def wait_ready(proc: subprocess.Popen, seconds: float = 60) -> bool:
     end = time.time() + seconds
     while time.time() < end:
@@ -84,9 +111,15 @@ def wait_ready(proc: subprocess.Popen, seconds: float = 60) -> bool:
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="verify_export_http_"))
     db = tmp / "h.db"
+    uploads = tmp / "uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
 
     env = dict(os.environ)
     env["CUOTIBEN_DATABASE_URL"] = f"sqlite:///{db.as_posix()}"
+    # 隔离 uploads：本自检会上传真图，绝不能写到项目真实目录
+    env["CUOTIBEN_UPLOADS_DIR"] = str(uploads)
+    env["CUOTIBEN_BACKUPS_DIR"] = str(tmp / "backups")
+    env["GIT_SYNC_ENABLED"] = "0"
 
     runner = tmp / "serve.py"
     runner.write_text(
@@ -248,6 +281,57 @@ def main() -> int:
                f"最长 {worst:.2f}s")
         expect("/health 没有超时（无 inf）",
                all(x != float("inf") for x in health_latencies))
+
+        # ---------------- 真实上传的图片能导出（HTTP 层回归） ----------------
+        section("真实上传图片后导出（用户报的 500 就在这里）")
+        # 用户侧表现：任意范围点导出都 500。根因是 _image_uri 只按文件名在
+        # uploads/ 根下平铺查找，而真实上传落在 uploads/YYYY/MM/DD/，
+        # 于是落到兜底分支对**相对路径**调 as_uri() -> ValueError -> 500。
+        up = _upload_jpeg("http-level.jpg")
+        expect("上传接口返回了 file_path", bool(up.get("file_path")),
+               up.get("file_path"))
+        expect("**真实上传落在日期分片目录里**（不是 uploads/ 根下）",
+               bool(re.fullmatch(r"uploads/\d{4}/\d{2}/\d{2}/[0-9a-f]+\.jpg",
+                                 up.get("file_path") or "")),
+               up.get("file_path"))
+        expect("上传的图片确实写到了磁盘",
+               (uploads / (up["file_path"]).replace("uploads/", "", 1)).is_file(),
+               up.get("file_path"))
+
+        st, _h, body = call("POST", "/questions", {
+            "folder_id": subj, "stem": "带真实上传图的题", "answer": "答案",
+            "tags": [], "sort_order": 99,
+            "images": [{"url": up["file_path"], "kind": "stem"}],
+        })
+        with_img_id = json.loads(body)["id"] if st in (200, 201) else None
+        expect("题目能挂上真实上传的图片", with_img_id is not None,
+               f"{st} {body[:160]}")
+
+        if with_img_id is not None:
+            st, _h, body = call("POST", "/export/pdf",
+                                {"scope": "manual", "question_ids": [with_img_id],
+                                 "with_answer": True}, timeout=180)
+            expect("**带真实上传图片的题目导出返回 200（不再 500）**",
+                   st == 200, f"HTTP {st} {body[:160]}")
+            expect("导出的是合法 PDF",
+                   st == 200 and body[:5] == b"%PDF-", f"{len(body)} 字节")
+            expect("**图片真的进了 PDF**",
+                   st == 200 and (b"/Image" in body or b"/XObject" in body))
+
+        # 图片文件不存在时也必须 200（缺图不该弄挂整次导出）
+        st, _h, body = call("POST", "/questions", {
+            "folder_id": subj, "stem": "图片缺失的题", "answer": "答案",
+            "tags": [], "sort_order": 100,
+            "images": [{"url": "uploads/2026/01/01/does-not-exist.jpg",
+                        "kind": "stem"}],
+        })
+        missing_id = json.loads(body)["id"] if st in (200, 201) else None
+        if missing_id is not None:
+            st, _h, body = call("POST", "/export/pdf",
+                                {"scope": "manual", "question_ids": [missing_id],
+                                 "with_answer": False}, timeout=180)
+            expect("**引用了不存在的图片时导出仍返回 200**",
+                   st == 200, f"HTTP {st} {body[:160]}")
 
         print("\n" + "-" * 74)
         print(f"合计 {OK + FAIL} 项，通过 {OK}，失败 {FAIL}")

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime as dt
 import io
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -26,11 +27,17 @@ from ..models.question_images import IMAGE_KIND_ANSWER, IMAGE_KIND_STEM
 from ..models.questions import MASTERY_MASTERED, MASTERY_STILL_WRONG, Question
 from ..schemas import ExportScope, ExportPdfRequest
 from ..weasyprint_bootstrap import chinese_font_path, ensure_native_libs
-from . import question_service
+from . import image_service, question_service
+
+logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 TEMPLATE_DIR = PROJECT_ROOT / "app" / "templates"
-UPLOADS_DIR = PROJECT_ROOT / "uploads"
+#: 图片目录。**统一取自 image_service**，不要在这里再拼一次
+#: `PROJECT_ROOT / "uploads"` —— 那样会绕过 CUOTIBEN_UPLOADS_DIR，
+#: 与上传/清理用的目录不一致（自检也无法隔离），
+#: 而导出正是靠这个目录把库里的相对路径解析成绝对路径的。
+UPLOADS_DIR = image_service.UPLOADS_DIR
 
 #: 文件名与页眉里用的范围中文名
 SCOPE_LABELS: dict[str, str] = {
@@ -207,22 +214,38 @@ def _strip_html(html: str | None) -> str:
 
 
 def _image_uri(file_path: str) -> str | None:
-    """把库里的图片路径转成模板可用的绝对 file:// URI。
+    """把库里的图片路径转成模板可用的绝对 `file://` URI。
 
-    库中存的是 `/uploads/xxx.jpg` 这类 URL 形式，需要映射到磁盘路径。
-    找不到文件时返回 None，由模板跳过 —— 缺一张图不该让整次导出失败。
+    **必须用 image_service.absolute_path_of() 解析，不要自己拼路径。**
+    库中存的是 `uploads/YYYY/MM/DD/{uuid}.jpg` 这种**日期分片**相对路径，
+    前端还会传 `/uploads/...` 形式：
+
+    - 旧实现只按文件名在 `UPLOADS_DIR / name`（uploads/ 根下）平铺查找 ——
+      对分片存储**必然 miss**，因为真实文件在子目录里。
+    - 于是落到兜底分支 `Path(file_path).is_file()`：按**当前工作目录**
+      判断相对路径，再从 `__file__` 反推项目根去拼，得到的是**相对路径**，
+      最后 `as_uri()` 直接抛 `ValueError: relative path can't be expressed
+      as a file URI` —— 而 router 没拦 ValueError，整次导出变成 HTTP 500。
+      用户侧的表现就是"任意地方点导出 PDF 都报错"。
+
+    解析不出来（文件不存在）时返回 None，由模板跳过 ——
+    缺一张图不该让整次导出失败。
     """
     if not file_path:
         return None
-    name = file_path.replace("\\", "/").rsplit("/", 1)[-1]
-    candidate = UPLOADS_DIR / name
-    if candidate.is_file():
-        return candidate.as_uri()
-    # 也接受库中直接存绝对路径的情况
-    direct = Path(file_path)
-    if direct.is_file():
-        return direct.as_uri()
-    return None
+    try:
+        target = image_service.absolute_path_of(file_path)
+    except (OSError, ValueError):
+        return None
+    # 最后防线：图片是锦上添花，任何路径异常都退化成"跳过这张图"，
+    # 绝不让它把整次导出弄挂。as_uri() 只接受绝对路径，否则抛 ValueError。
+    try:
+        if not target.is_file():
+            return None
+        return target.as_uri()
+    except (OSError, ValueError):
+        logger.warning("导出时跳过无法解析的图片：%s", file_path)
+        return None
 
 
 def build_context(
@@ -341,6 +364,20 @@ def export_pdf(
     context = build_context(questions, payload, now=moment)
     html = render_html(context)
     pdf = html_to_pdf(html)
+
+    # 记一条导出日志：题数、字节、被跳过的图片数。
+    # 之前导出 500 只能靠翻 uvicorn 的 traceback 才定位；有这条日志，
+    # "缺图但导出成功"和"图片没进 PDF"都能一眼看出来。
+    attached = sum(len(q.images or []) for q in questions)
+    rendered = sum(
+        len(item["images"]) + len(item["answer_images"])
+        for item in context["items"]
+    )
+    logger.info(
+        "导出 PDF：范围=%s 题数=%d 字节=%d 图片=%d/%d（跳过 %d）",
+        range_desc(payload, len(questions)), len(questions), len(pdf),
+        rendered, attached, attached - rendered,
+    )
 
     return ExportResult(
         pdf=pdf,

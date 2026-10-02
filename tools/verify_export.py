@@ -8,7 +8,7 @@
 - 中文不是方框（从 PDF 里把文字取回来比对，这是最硬的证据）
 - 题目不跨页切断（模板属性 + 多题跨页场景）
 - 文件名含日期与范围、Content-Disposition 的中文编码
-- 图片被写进 PDF
+- 图片被写进 PDF，**含真实上传产生的日期分片路径**
 - 空结果报错而不是产出空白 PDF
 """
 
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import datetime as dt
 import io
+import os
 import re
 import sys
 import tempfile
@@ -24,6 +25,23 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+# ---------------------------------------------------------------------------
+# 必须在 import 任何 app.* **之前**把 uploads 隔离到临时目录。
+#
+# 之前这个自检直接在项目真实的 uploads/ 下造文件（`Path("uploads")`），
+# 于是它测的"图片路径"是 `uploads/{文件名}` 这种**根下平铺**形态 ——
+# 而真实上传走 save_upload()，落在 `uploads/YYYY/MM/DD/` **日期分片**里。
+# 两者在 _image_uri 里走的是完全相反的分支：平铺形态能命中第一分支，
+# 分片形态落到兜底分支并抛 ValueError -> 导出 500。
+# 这就是导出 500 长期没被自检抓到、却让用户"任意地方点导出都报错"的原因。
+# ---------------------------------------------------------------------------
+_TMP = Path(tempfile.mkdtemp(prefix="verify_export_"))
+_UPLOADS = _TMP / "uploads"
+_UPLOADS.mkdir(parents=True, exist_ok=True)
+os.environ["CUOTIBEN_UPLOADS_DIR"] = str(_UPLOADS)
+os.environ["CUOTIBEN_BACKUPS_DIR"] = str(_TMP / "backups")
+os.environ["GIT_SYNC_ENABLED"] = "0"
 
 import _pdf_probe as P  # noqa: E402
 
@@ -95,10 +113,28 @@ def main() -> int:  # noqa: C901 - 线性用例清单，拆函数反而难读
     from app.schemas import ExportPdfRequest
     from app.services import export_service
 
-    tmp = Path(tempfile.mkdtemp(prefix="verify_export_"))
+    tmp = Path(tempfile.mkdtemp(prefix="verify_export_db_"))
     engine = create_engine(f"sqlite:///{(tmp / 'v.db').as_posix()}")
     Base.metadata.create_all(engine)
     db = sessionmaker(bind=engine)()
+
+    # ---------------- 环境隔离哨兵 ----------------
+    # 只要 uploads 没被隔离到临时目录就立刻退出，绝不碰真实文件
+    # （教训：曾经有一个自检以为设了环境变量就隔离了，实际清了真实 uploads/）
+    from app.services import image_service
+
+    if image_service.UPLOADS_DIR.resolve() != _UPLOADS.resolve():
+        print("!! 致命：UPLOADS_DIR 未指向临时目录，拒绝继续")
+        print(f"   image_service.UPLOADS_DIR = {image_service.UPLOADS_DIR}")
+        print(f"   期望                      = {_UPLOADS}")
+        return 3
+    expect("uploads 已隔离到临时目录（哨兵通过）",
+           image_service.UPLOADS_DIR.resolve() == _UPLOADS.resolve(),
+           str(image_service.UPLOADS_DIR))
+    expect("export_service 与 image_service 用同一个 uploads 目录",
+           export_service.UPLOADS_DIR.resolve()
+           == image_service.UPLOADS_DIR.resolve(),
+           f"export={export_service.UPLOADS_DIR} image={image_service.UPLOADS_DIR}")
 
     # ---------------- 造数据 ----------------
     subject = Folder(name="高等数学", parent_id=None, sort_order=0)
@@ -311,8 +347,11 @@ def main() -> int:  # noqa: C901 - 线性用例清单，拆函数反而难读
 
     # ---------------- 图片 ----------------
     section("图片")
-    uploads = Path("uploads")
-    uploads.mkdir(exist_ok=True)
+    # 注意用**隔离后的** uploads 目录（模块顶部设的 _UPLOADS）：
+    # 以前这里写 `Path("uploads")`，即项目真实目录 —— 那样既会污染真实
+    # uploads/，又让"平铺文件名"这种路径形态看起来能用，掩盖了分片路径的 bug。
+    uploads = _UPLOADS
+    uploads.mkdir(parents=True, exist_ok=True)
     img = uploads / "_verify_export_tmp.jpg"
     try:
         from PIL import Image
@@ -343,6 +382,103 @@ def main() -> int:  # noqa: C901 - 线性用例清单，拆函数反而难读
               b"/Image" not in P.stream_bytes(no_img.pdf))
     finally:
         img.unlink(missing_ok=True)
+
+    # ---------------- 真实上传路径（日期分片） ----------------
+    section("真实上传路径（日期分片）—— 导出 500 的根因回归")
+    # 复现用户实际遇到的形态：图片**不是**放在 uploads/ 根下，而是走
+    # save_upload() 落到 uploads/YYYY/MM/DD/{uuid}.jpg。
+    # 旧实现只按文件名在 uploads/ 根下平铺查找，必然 miss；兜底又对
+    # **相对路径**调 as_uri() -> ValueError -> HTTP 500。
+    from app.services import question_service
+
+    sharded_paths: list[str] = []
+    try:
+        from PIL import Image as _Img
+
+        for color, kind in (((10, 120, 200), "stem"), ((220, 80, 40), "answer")):
+            buf = io.BytesIO()
+            _Img.new("RGB", (60, 40), color).save(buf, "JPEG", quality=88)
+            rel, absolute = image_service.save_upload(buf.getvalue(), ".jpg")
+            sharded_paths.append(rel)
+            expect(f"{kind} 图落在了日期分片目录里（不是 uploads/ 根下）",
+                   "/" in rel.strip("/").replace("uploads/", "", 1)
+                   and absolute.is_file(),
+                   rel)
+
+        # 契约层：确认存的是 uploads/YYYY/MM/DD/... 且能解析回同一文件
+        expect("分片路径形如 uploads/YYYY/MM/DD/xxx.jpg",
+               bool(re.fullmatch(r"uploads/\d{4}/\d{2}/\d{2}/[0-9a-f]+\.jpg",
+                                 sharded_paths[0])),
+               sharded_paths[0])
+        expect("absolute_path_of 能把分片路径解析回该文件",
+               image_service.absolute_path_of(roundtrip := sharded_paths[0]).is_file(),
+               roundtrip)
+
+        # 三种写法都要能解析（前端可能传 url 形式；库里存相对路径）
+        for label, form in (
+            ("uploads/... 相对路径", sharded_paths[0]),
+            ("/uploads/... URL 形式", "/" + sharded_paths[0]),
+            ("去掉 uploads 前缀", sharded_paths[0].replace("uploads/", "", 1)),
+        ):
+            resolved = image_service.absolute_path_of(form)
+            expect(f"absolute_path_of 支持 {label}",
+                   resolved.is_file() and resolved.is_absolute(), form[:44])
+
+        # 关键：把这个分片路径挂到题目上并导出 —— 旧实现这里会抛 ValueError
+        question_service.update_question(
+            db, q1.id,
+            images=[{"url": sharded_paths[0], "kind": "stem"},
+                    {"url": sharded_paths[1], "kind": "answer"}],
+            fields_to_update={"images"})
+        db.commit()
+
+        try:
+            sharded = export_service.export_pdf(
+                db, ExportPdfRequest(scope="manual", question_ids=[q1.id],
+                                     with_answer=True), now=now)
+            expect("**带分片路径图片的题目能正常导出（不再 500）**",
+                   sharded.pdf[:5] == b"%PDF-", f"{len(sharded.pdf)} 字节")
+            expect("**图片真的写进了 PDF（不是静默丢图）**",
+                   b"/Image" in P.stream_bytes(sharded.pdf)
+                   or b"/XObject" in P.stream_bytes(sharded.pdf))
+        except Exception as exc:  # noqa: BLE001
+            expect("**带分片路径图片的题目能正常导出（不再 500）**", False,
+                   f"{type(exc).__name__}: {exc}")
+            expect("**图片真的写进了 PDF（不是静默丢图）**", False, "上一条已失败")
+
+        # 渲染上下文层面也要确认 URI 是绝对 file:// 形式
+        q1_sharded = question_service.get_question(db, q1.id)
+        ctx = export_service.build_context(
+            [q1_sharded],
+            ExportPdfRequest(scope="manual", question_ids=[q1.id],
+                             with_answer=True), now=now)
+        uris = ctx["items"][0]["images"] + ctx["items"][0]["answer_images"]
+        expect("模板拿到的图片 URI 是绝对 file:// 形式",
+               len(uris) == 2 and all(u.startswith("file://") for u in uris),
+               [u[:40] for u in uris])
+    finally:
+        for rel in sharded_paths:
+            image_service.absolute_path_of(rel).unlink(missing_ok=True)
+
+    # ---------------- 缺图不阻断导出 ----------------
+    section("图片文件缺失时不阻断整次导出")
+    question_service.update_question(
+        db, q1.id,
+        images=["/uploads/2026/01/01/definitely-missing-file.jpg"],
+        fields_to_update={"images"})
+    db.commit()
+    try:
+        missing_ok = export_service.export_pdf(
+            db, ExportPdfRequest(scope="manual", question_ids=[q1.id],
+                                 with_answer=False), now=now)
+        expect("**缺图时仍然导出成功（只跳过那张图）**",
+               missing_ok.pdf[:5] == b"%PDF-", f"{len(missing_ok.pdf)} 字节")
+        expect("缺图时 PDF 里没有图片 XObject",
+               b"/Image" not in P.stream_bytes(missing_ok.pdf))
+    except Exception as exc:  # noqa: BLE001
+        expect("**缺图时仍然导出成功（只跳过那张图）**", False,
+               f"{type(exc).__name__}: {exc}")
+        expect("缺图时 PDF 里没有图片 XObject", False, "上一条已失败")
 
     # ---------------- 题干图 / 答案图分位置 ----------------
     section("题干图与答案图分位置（requirements 2.3 / 3.3）")
