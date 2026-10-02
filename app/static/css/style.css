@@ -1348,6 +1348,15 @@ textarea.input {
 
 .toast__message { flex: 1 1 auto; }
 
+/* Toast 上的动作按钮（打勾后的「撤销」）。
+   颜色沿用 .btn--text 的 --c-primary-text，与 .toast 的 --c-surface 底色
+   正好是 check_contrast 里已登记的一对，不用另加 token。 */
+.toast__action {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  text-decoration: underline;
+}
+
 /* 抽屉遮罩（移动端侧边栏）*/
 .drawer-mask {
   position: fixed;

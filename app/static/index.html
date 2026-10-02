@@ -1207,6 +1207,9 @@
           <use :href="t.type === 'success' ? '#i-check' : '#i-alert'"></use>
         </svg>
         <span class="toast__message">{{ t.message }}</span>
+        <!-- 动作按钮：打勾后的「撤销」走这里 -->
+        <button v-if="t.action" class="btn btn--text btn--sm toast__action" type="button"
+                @click="runToastAction(t)">{{ t.action.label }}</button>
         <button class="icon-btn" type="button" style="width:24px;height:24px"
                 aria-label="关闭提示" @click="dismissToast(t.id)">
           <svg class="icon icon--sm"><use href="#i-close"></use></svg>

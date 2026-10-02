@@ -341,15 +341,32 @@
 
       /* ================= Toast ================= */
 
-      function toast(message, type, sticky) {
+      /**
+       * 弹一条提示。
+       *
+       * `action` 形如 `{ label, handler }` —— 会渲染成一个按钮，
+       * 用于「打勾成功 -> 撤销」这类"动作刚发生、要立刻给后悔机会"的场景。
+       * 带 action 时默认停留更久（见下），否则用户还没看清就消失了。
+       */
+      function toast(message, type, sticky, action) {
         toastSeq += 1;
         var id = toastSeq;
-        toasts.value.push({ id: id, message: message, type: type || 'success' });
+        toasts.value.push({
+          id: id, message: message, type: type || 'success',
+          action: action || null,
+        });
         if (!sticky) {
-          window.setTimeout(function () { dismissToast(id); },
-            type === 'warning' ? 5000 : 3000);
+          var ms = action ? 6000 : (type === 'warning' ? 5000 : 3000);
+          window.setTimeout(function () { dismissToast(id); }, ms);
         }
         return id;
+      }
+
+      /** 点击 Toast 上的动作按钮：先收起提示，再执行回调。 */
+      function runToastAction(t) {
+        var action = t && t.action;
+        dismissToast(t.id);
+        if (action && typeof action.handler === 'function') { action.handler(); }
       }
 
       function dismissToast(id) {
@@ -758,6 +775,9 @@
       function checkReview(item, mastery, opts) {
         var id = item.question_id || item.id;
         var options = opts || {};
+        // 先把这条队列项留一份：撤销时要用它把题放回原处。
+        // 不能撤销时再去问后端要 —— 后端只返回 MessageOut，没有队列项结构。
+        var snapshot = item;
         return API.checkReview(id, mastery)
           .then(function (record) {
             reviewDoneToday.value += 1;
@@ -768,13 +788,66 @@
             // 注意：这里曾经写成 arguments[0]，但那是**回调自己**的 arguments，
             // 结果 next_review_at 永远是 undefined、Toast 显示 "—"。
             var next = record && record.next_review_at ? fmtDate(record.next_review_at) : '—';
-            toast('已打勾，下次复习：' + next);
+            toast('已打勾，下次复习：' + next, 'success', false, {
+              label: '撤销',
+              handler: function () { undoCheck(id, snapshot); },
+            });
             announce('已打勾，下次复习 ' + next);
             recomputeStats();
             if (options.flashId) { flashRow(options.flashId); }
             return loadFolderTree();
           })
           .catch(toastError);
+      }
+
+      /**
+       * 撤销最近一次打勾（requirements 5.3：撤销 = 软删除最近一条 review_record）。
+       *
+       * 为什么入口挂在 Toast 上而不是做个固定按钮：打勾是"一按即生效、并且
+       * 立刻把题从队列移走"的操作，等用户意识到点错时那题已经不在眼前了 ——
+       * 撤销必须紧跟着这个动作出现，而不是让用户去找。
+       *
+       * `snapshot` 是打勾前那条队列项：撤销成功后用它把题**放回队列**。
+       * 少了这一步会出现"提示说撤销成功、但队列里还是没有它"。
+       */
+      function undoCheck(questionId, snapshot) {
+        return API.uncheckReview(questionId)
+          .then(function () {
+            reviewDoneToday.value = Math.max(0, reviewDoneToday.value - 1);
+            // 先把本地队列补回去（保留原来的排位），再用服务端结果校正。
+            var restored = false;
+            if (snapshot) {
+              var exists = reviewQueue.value.some(function (i) {
+                return i.question_id === questionId;
+              });
+              if (!exists) {
+                reviewQueue.value = reviewQueue.value.concat([snapshot]);
+                restored = true;
+              }
+            }
+            toast('已撤销打勾');
+            announce('已撤销打勾');
+            recomputeStats();
+            // 与服务端对齐：撤销后该题应当重新出现在今日队列里
+            return Promise.all([loadReview(), loadFolderTree()])
+              .then(function () {
+                var back = reviewQueue.value.some(function (i) {
+                  return i.question_id === questionId;
+                });
+                if (!back && restored) {
+                  // 服务端说不在队列里（比如还没到期），以服务端为准并说明
+                  toast('已撤销，但这道题还不到复习时间', 'warning');
+                }
+              });
+          })
+          .catch(function (err) {
+            // 409 = 已经没有可撤销的记录（比如连点了两次撤销）
+            if (err && err.status === 409) {
+              toast('这道题没有可撤销的打勾了', 'warning');
+              return loadReview();
+            }
+            toastError(err);
+          });
       }
 
       /** 行背景短暂高亮，动画结束后自动摘掉 class。 */
@@ -1923,6 +1996,8 @@ function trapFocus(event) {
         starQuestion: starQuestion,
         removeQuestion: removeQuestion,
         checkReview: checkReview,
+        undoCheck: undoCheck,
+        runToastAction: runToastAction,
         rateReview: rateReview,
         toggleNotif: toggleNotif,
         expandInPanel: expandInPanel,

@@ -351,6 +351,121 @@ def run_cases(cdp: CDP) -> int:  # noqa: C901
         expect("联想列表里有候选项", isinstance(options, int) and options >= 1,
                f"{options} 项")
 
+    section("打勾后能撤销（requirements 5.3 / 验收标准 13）")
+    # 关掉弹窗，回到题目列表。直接置组件状态最可靠 ——
+    # 弹窗里有两个 aria-label="关闭" 的按钮，按文案找容易点错。
+    closed = cdp.js("""(() => {
+      const el = document.getElementById('app');
+      const comp = el && el._vnode && el._vnode.component;
+      if (!comp) return 'no-comp';
+      comp.setupState.questionEditor.open = false;
+      return 'closed';
+    })()""")
+    expect("已关闭题目弹窗", closed == "closed", closed)
+    time.sleep(1.2)
+
+    # 首页不渲染题目表格，必须切到「题目管理」才有行内打勾按钮
+    nav = cdp.js("""(() => {
+      const n = Array.from(document.querySelectorAll('.nav__item'))
+        .find(x => x.textContent.includes('题目管理'));
+      if (!n) return 'NO_NAV';
+      n.click();
+      return 'clicked';
+    })()""")
+    expect("能切到题目管理页", nav == "clicked", nav)
+    time.sleep(2.0)
+
+    # 让题目到期，才会进复习队列
+    cdp.js("""fetch('/__redue', {method: 'POST'}).then(r => r.text())""")
+    time.sleep(1.5)
+
+    # 表格里的行内「打勾」按钮：textContent 含 svg，不能用 === 精确匹配
+    scene = cdp.js("""(() => {
+      const active = document.querySelector('.nav__item.is-active');
+      const el = document.getElementById('app');
+      const comp = el && el._vnode && el._vnode.component;
+      return JSON.stringify({
+        page: comp ? comp.setupState.currentPage : '?',
+        navActive: active ? active.textContent.trim() : null,
+        rows: document.querySelectorAll('table tbody tr').length,
+        checkBtns: document.querySelectorAll('.check-btn').length,
+        allBtns: Array.from(document.querySelectorAll('button'))
+          .map(b => b.textContent.trim()).filter(t => t.includes('打勾')).length,
+        questionCount: comp ? (comp.setupState.questions || []).length : '?',
+      });
+    })()""")
+    expect("诊断 打勾前现场", True, scene)
+
+    clicked = cdp.js("""(() => {
+      const b = Array.from(document.querySelectorAll('.check-btn'))
+        .find(x => x.textContent.includes('打勾'));
+      if (!b) return 'NO_BUTTON';
+      b.click();
+      return 'clicked';
+    })()""")
+    expect("表格行内有打勾按钮可点", clicked == "clicked", clicked)
+    time.sleep(2.2)
+
+    # Toast 上应当出现「撤销」
+    undo_label = cdp.js("""(() => {
+      const b = document.querySelector('.toast__action');
+      return b ? b.textContent.trim() : null;
+    })()""")
+    expect("打勾后的提示上出现「撤销」按钮", undo_label == "撤销", undo_label)
+
+    # 撤销前的打勾数（用于核对是否回退）
+    done_before = cdp.js("""(() => {
+      const el = document.getElementById('app');
+      const comp = el && el._vnode && el._vnode.component;
+      return comp ? comp.setupState.reviewDoneToday : '__no_comp__';
+    })()""")
+
+    clicked_undo = cdp.js("""(() => {
+      const b = document.querySelector('.toast__action');
+      if (!b) return 'NO_UNDO';
+      b.click();
+      return 'clicked';
+    })()""")
+    expect("能点到撤销按钮", clicked_undo == "clicked", clicked_undo)
+    time.sleep(2.5)
+
+    done_after = cdp.js("""(() => {
+      const el = document.getElementById('app');
+      const comp = el && el._vnode && el._vnode.component;
+      return comp ? comp.setupState.reviewDoneToday : '__no_comp__';
+    })()""")
+    expect("撤销后「今日已打勾」计数回退",
+           isinstance(done_before, int) and isinstance(done_after, int)
+           and done_after == done_before - 1,
+           f"{done_before} -> {done_after}")
+
+    # 服务端也要认：撤销后该题回到今日队列
+    back = cdp.js("""(async () => {
+      const rq = await fetch('/review/today').then(r => r.json());
+      return JSON.stringify(Array.isArray(rq) ? rq.length : rq);
+    })()""")
+    expect("撤销后该题重新出现在今日队列（服务端）",
+           back not in ("0", None, "__ERR__"), f"队列={back}")
+
+    # 连点两次撤销的第二下应当拿到 409 -> 友好提示
+    again = cdp.js("""(async () => {
+      const el = document.getElementById('app');
+      const comp = el && el._vnode && el._vnode.component;
+      const rq = await fetch('/review/today').then(r => r.json());
+      if (!rq.length) return 'EMPTY_QUEUE';
+      await comp.setupState.undoCheck(rq[0].question_id, null);
+      return 'done';
+    })()""")
+    time.sleep(2.0)
+    warn = cdp.js("""(() => {
+      const t = Array.from(document.querySelectorAll('.toast__message'))
+        .map(x => x.textContent.trim());
+      return JSON.stringify(t);
+    })()""")
+    expect("重复撤销不会静默失败（给出提示）",
+           again == "done" and ("撤销" in (warn or "") or "打勾" in (warn or "")),
+           f"{again} / {warn}")
+
     print("\n" + "-" * 74)
     print(f"合计 {OK + FAIL} 项，通过 {OK}，失败 {FAIL}")
     for name in FAILED:
