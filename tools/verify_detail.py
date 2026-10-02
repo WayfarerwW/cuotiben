@@ -537,6 +537,115 @@ def run_cases(cdp: CDP) -> int:  # noqa: C901
            "导数" in (af.get("currentFolderName") or ""),
            af.get("currentFolderName"))
 
+    section("关闭详情后切大类，不许把旧详情复活（本次 bug 的核心回归）")
+    # 复现路径（用户报的）：
+    #   1. 切到 A 大类 -> 点题干预览开详情
+    #   2. 关闭详情
+    #   3. 切到 B 大类
+    # 之前第 2 步因为 closeDetail 首行 `if (!open) return` 早退而**漏清 hash**，
+    # hash 残留 `#/questions/q/{id}`；第 3 步的 loadPage 回调调
+    # applyHashDetail 时又把那道题打开了 —— 表现为"切到 B 却弹出 A 的题"。
+    #
+    # 这一段从**干净加载**出发：前面几段会把当前文件夹停在无题的大类上，
+    # 接着测会拿不到 stem-open。固定 sleep + 跨段共享状态是自检里最容易
+    # 产生假警报的组合，所以这里重新加载再走。
+    cdp.call("Page.enable")
+    cdp.call("Page.reload")
+    time.sleep(4.0)
+    cdp.js("""(() => {
+      const n = Array.from(document.querySelectorAll('.nav__item'))
+        .find(x => x.textContent.includes('题目管理'));
+      if (n) n.click();
+      return !!n;
+    })()""")
+    time.sleep(2.5)
+
+    # 第 1 步：切到「极限」（有题目），点题干预览开详情
+    cdp.js("""(() => {
+      const rows = Array.from(document.querySelectorAll('.tree__children .tree__row'));
+      const t = rows.find(r => r.textContent.includes('极限'));
+      if (t) t.id = 'rev-cat';
+      return !!t;
+    })()""")
+    expect("（前置）切到有题目的分类", cdp.click_selector("#rev-cat"))
+    time.sleep(2.0)
+    cdp.js("""(() => {
+      const bs = Array.from(document.querySelectorAll('.stem-open'));
+      const t = bs.find(b => b.textContent.includes('lim'));
+      if (t) t.id = 'rev-probe';
+      return !!t;
+    })()""")
+    opened_ok = cdp.click_selector("#rev-probe")
+    expect("（前置）点题干预览能打开详情", opened_ok)
+    expect("（前置）详情已打开", cdp.wait_detail(True) is True)
+    open_hash = cdp.js("location.hash") or ""
+    print("  打开时 hash：" + open_hash)
+    expect("打开时地址栏带上了题目 id", "/q/" in open_hash, open_hash)
+
+    # 第 2 步：关闭详情（用遮罩，和用户操作一致）
+    cdp.js("""(() => {
+      const mask = document.querySelector('.modal-mask');
+      const r = mask.getBoundingClientRect();
+      mask.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true,
+        clientX: r.left + 4, clientY: r.top + 4}));
+      return true;
+    })()""")
+    expect("点遮罩能关掉详情", cdp.wait_detail(False, 4.0) is True)
+    closed_hash = cdp.js("location.hash") or ""
+    expect("**关闭后 hash 里不再残留题目 id**（这是根因）",
+           "/q/" not in closed_hash, closed_hash)
+
+    # 第 3 步：切到另一个大类（详情里那道题不属于它）
+    cdp.js("""(() => {
+      const rows = Array.from(document.querySelectorAll('.tree__children .tree__row'));
+      const t = rows.find(r => r.textContent.includes('导数'));
+      if (t) t.id = 'rev-other';
+      return !!t;
+    })()""")
+    b_rev = cdp.box("#rev-other")
+    expect("能找到另一个大类行", bool(b_rev) and b_rev["same"] is True, b_rev)
+    if b_rev:
+        cdp.click_at(b_rev)
+    time.sleep(2.2)
+    st = cdp.js("""(() => {
+      const c = document.getElementById('app')._vnode.component;
+      return JSON.stringify({
+        open: c.setupState.questionDetail.open,
+        dom: !!document.querySelector('.modal--detail'),
+        hash: location.hash,
+        folder: c.setupState.currentFolderName,
+      });
+    })()""")
+    print("  切大类后：" + str(st))
+    sd = json.loads(st) if (st or "").startswith("{") else {}
+    expect("**切大类后没有弹出旧详情**（用户报的现象已修）",
+           sd.get("open") is False and sd.get("dom") is False, st)
+    expect("确实切到了新大类",
+           "导数" in (sd.get("folder") or ""), sd.get("folder"))
+
+    # 再验证一遍：切回原大类，也不该弹
+    cdp.js("""(() => {
+      const rows = Array.from(document.querySelectorAll('.tree__children .tree__row'));
+      const t = rows.find(r => r.textContent.includes('极限'));
+      if (t) t.id = 'rev-back';
+      return !!t;
+    })()""")
+    if cdp.click_selector("#rev-back"):
+        time.sleep(2.2)
+    expect("切回原大类也不会复活旧详情", cdp.detail_in_dom() is False)
+
+    section("但用户主动再点一次那道题，仍要能打开")
+    cdp.js("""(() => {
+      const bs = Array.from(document.querySelectorAll('.stem-open'));
+      const t = bs.find(b => b.textContent.includes('lim'));
+      if (t) t.id = 'rev-again';
+      return !!t;
+    })()""")
+    expect("**主动点击仍能打开详情**（短路不能把正常路径也挡掉）",
+           cdp.click_selector("#rev-again"))
+    expect("详情正常打开", cdp.wait_detail(True) is True)
+    cdp.ensure_closed()
+
     section("点侧边栏导航仍能收起详情")
     # 切回有题目的分类，开详情，然后点导航退出
     cdp.js("""(() => {

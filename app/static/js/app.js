@@ -629,40 +629,81 @@
       }
 
       /**
-       * 让浮层状态与 hash 中的题目 id 对齐。
+       * **唯一**改 hash 的地方。
+       *
+       * 为什么必须收敛到一个函数：之前有 5 处各自 `location.hash = ...`
+       * （go / openDetail / closeDetail / applyHashDetail 兜底），
+       * 于是"详情已关闭、hash 却还留着 `#/questions/q/{id}`"这种脏状态
+       * 某一处漏清就会留下，之后任何一次 hash 同步都会把旧详情**复活** ——
+       * 用户看到的是"切到另一个大类，却弹出了刚才那道题"。
+       *
+       * 同值不赋值：给 location.hash 赋同一个值也会触发 hashchange，
+       * 会让 applyHashDetail 白跑一轮。
+       */
+      function setHash(hash) {
+        if (window.location.hash !== hash) {
+          window.location.hash = hash;
+        }
+      }
+
+      /** 普通页面地址（同时清掉可能残留的详情深链接）。 */
+      function pageHash(page) {
+        return '#/' + (VALID_PAGES.indexOf(page) !== -1 ? page : 'home');
+      }
+
+      /** 详情深链接地址。 */
+      function detailHash(id) {
+        return '#/questions/q/' + id;
+      }
+
+      /**
+       * 让浮层状态与 hash 中的题目 id 对齐 —— **浮层可见性的唯一权威**。
        * 直接把题目列表里的那一项填进去，不发请求。
        *
-       * `suppressDetailSync` 是防重开竞态用的：`closeDetail()` 会把 hash 从
-       * `#/questions/q/12` 改回 `#/questions`，这个改动的 hashchange（以及
-       * 关闭后紧跟着的 loadPage 回调）可能在本函数**之后**才跑。那时
-       * hash 若仍是旧的详情地址，就会"刚关掉又自己打开" —— 表现是关闭
-       * 详情后侧边栏仍被遮罩挡住、点不到大类。关闭时挂上标志、
-       * 下一个 tick 摘掉，挡住这一小段窗口。
+       * 三道短路，缺一不可（都是踩过的坑）：
+       *
+       * 1. `suppressDetailSync`：`closeDetail()` 会改 hash，这个改动的
+       *    hashchange（以及紧随的 loadPage 回调）可能在本函数**之后**才跑。
+       *    关闭时挂标志、下一个 tick 摘掉，挡住这一小段窗口。
+       * 2. `closedDetailId`：用户刚关掉的那一题不许复活。曾经 `closeDetail()`
+       *    因为 `if (!open) return` 早退而漏清 hash，之后切大类触发
+       *    loadPage -> 本函数 -> 把旧详情又打开了。
+       * 3. **不属于当前筛选就不开**：即使 hash 合法，也不该弹出列表里
+       *    看不到的题 —— 那会表现为"切到立体几何却弹出线性代数的题"。
        */
       var suppressDetailSync = false;
+      /** 用户刚主动关闭的题目 id；再次打开（或换题）时清空。 */
+      var closedDetailId = null;
 
       function applyHashDetail() {
         if (suppressDetailSync) { return; }
         var id = detailIdFromHash();
         if (id === null) {
-          if (questionDetail.open) { closeDetail(true); }
+          // hash 没有题目 id：详情不该开着（只收浮层，hash 已经是对的）
+          if (questionDetail.open) { closeDetailSilent(); }
           return;
         }
+        // 已经开着同一题：什么都不做
         if (questionDetail.open && questionDetail.question
             && questionDetail.question.id === id) {
           return;
         }
+        // 用户刚关掉它：不复活
+        if (closedDetailId === id) { return; }
         var q = questions.value.find(function (x) { return x.id === id; });
-        if (q) {
-          openDetail(q);
-        } else {
-          // 列表里没有（已被删除、或还没加载完）：把 hash 收回普通页面，
+        if (!q) {
+          // 列表里没有（已删除 / 还没加载完）：把 hash 收回普通页面，
           // 否则会出现"地址栏指着某题、界面什么都没打开"的悬空状态
-          if (!suppressDetailSync) { toast('找不到这道题（可能已删除）', 'warning'); }
-          if (window.location.hash.indexOf('/q/') !== -1) {
-            window.location.hash = '#/questions';
-          }
+          toast('找不到这道题（可能已删除）', 'warning');
+          setHash(pageHash('questions'));
+          return;
         }
+        // 不属于当前筛选：不在列表里的题不该弹详情
+        if (currentFolderId.value && q.folder_id !== currentFolderId.value) {
+          setHash(pageHash('questions'));
+          return;
+        }
+        openDetail(q);
       }
 
       /**
@@ -684,11 +725,13 @@
         drawerOpen.value = false;
         userMenuOpen.value = false;
 
-        if (hashIsDetail && questionDetail.open && fromNav) {
-          // 点导航 = 主动退出详情，收回 hash
-          window.location.hash = '#/' + page;
-        } else if (!hashIsDetail && window.location.hash !== '#/' + page) {
-          window.location.hash = '#/' + page;
+        if (hashIsDetail && fromNav) {
+          // 点导航 = 主动退出详情：**先关浮层再改 hash**。
+          // 不能只改 hash 指望 hashchange 来关 —— closeDetail 会把 hash
+          // 一并清干净，浮层状态才是唯一真相。
+          closeDetail();
+        } else if (!hashIsDetail) {
+          setHash(pageHash(page));
         }
         loadPage(page);
       }
@@ -1635,15 +1678,13 @@ function trapFocus(event) {
         questionDetail.answerOpen = false;   // 每次打开都重新遮住
         questionDetail.copied = false;
         questionDetail.open = true;
+        closedDetailId = null;               // 明确打开了，解除"刚关掉"的封印
         rememberFocus();
         // 弹窗打开必须把焦点移入，否则键盘用户按 Tab 会从一个"在背后的"
         // 元素开始走，视觉上焦点像是凭空出现。见 AGENTS.md 第十节 10.1。
         nextTick(focusIntoModal);
         // 深链接：刷新/书签能直接回到这道题
-        var want = '#/questions/q/' + q.id;
-        if (window.location.hash !== want) {
-          window.location.hash = want;
-        }
+        setHash(detailHash(q.id));
         // 复习进度：纯附加信息，失败静默
         API.getQuestion(q.id)
           .then(function (full) {
@@ -1657,26 +1698,47 @@ function trapFocus(event) {
       }
 
       /**
-       * 关闭详情；`keepHash` 用于"从深链接同步状态"时避免来回改 hash。
+       * 关闭详情（**用户入口**：Esc / 点遮罩 / 按钮 / 点导航）。
        *
-       * **顺序很关键：先 restoreFocus，再改 hash。**
-       * 改 hash 会**同步**触发 hashchange -> applyHashDetail() -> 再次
-       * 进入本函数，而 applyHashDetail 会调 openDetail/closeDetail，
-       * 后者会执行 rememberFocus() —— 那时 `document.activeElement` 已经是
-       * body（弹窗刚被移除），于是把上一次记下的"题干按钮"覆盖成 body，
-       * 关闭后焦点就回不到触发元素了。先归还焦点就没有这个窗口。
+       * 永远把 hash 清回普通页面 —— `#/questions/q/{id}` 是"我正在看第 id 题"
+       * 的承诺，浮层关了这个承诺就失效了。曾经因为
+       * `if (!questionDetail.open) return;` 早退而漏清 hash，残留的地址
+       * 之后会被 applyHashDetail **兑现**，表现为"切到立体几何，却弹出了
+       * 线性代数那道题"。
+       *
+       * **刻意不接受任何参数**：模板上写 `@click.self="closeDetail"` 时，
+       * Vue 会把 MouseEvent 当作第一个参数传进来。以前签名是
+       * `closeDetail(keepHash)`，于是 `keepHash` 变成那个**真值事件对象**，
+       * `if (!keepHash)` 永远不成立 —— hash 就永远清不掉。
+       * 这是很容易重犯的坑，所以把"用不用 keepHash"拆成两个函数：
+       * 这个只给用户操作调，内部同步用 closeDetailSilent。
        */
-      function closeDetail(keepHash) {
+      function closeDetail() {
+        closeDetailSilent();
+        setHash(pageHash('questions'));
+      }
+
+      /**
+       * 关闭详情但**不动 hash**（内部用）。
+       *
+       * 唯一调用点是 `applyHashDetail()`：hash 已经指向普通页面、只是浮层
+       * 还开着时，收掉浮层即可，不必再写一次 hash（写同值也会触发
+       * hashchange，白跑一轮）。
+       *
+       * **不导出、不绑到模板**，避免又被当成事件监听器直接传。
+       */
+      function closeDetailSilent() {
         if (!questionDetail.open) { return; }
         suppressDetailSync = true;
+        // 记下"刚被用户关掉的是哪一题"：applyHashDetail 不许它复活
+        closedDetailId = questionDetail.question
+          ? questionDetail.question.id : null;
         questionDetail.open = false;
         questionDetail.question = null;
         questionDetail.review = null;
         questionDetail.answerOpen = false;
+        // 先归还焦点再让 DOM 移除，否则 lastFocused 会被 body 覆盖
         restoreFocus();
-        if (!keepHash && window.location.hash.indexOf('/q/') !== -1) {
-          window.location.hash = '#/questions';
-        }
         // 等这一轮 hashchange / loadPage 回调都跑完再放开
         nextTick(function () {
           window.setTimeout(function () { suppressDetailSync = false; }, 0);

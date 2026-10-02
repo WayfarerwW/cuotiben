@@ -1297,7 +1297,7 @@
     <!-- ===================== 题目详情（只读浏览） ===================== -->
     <!-- 刻意不放「打勾」：打勾会改复习计划，浏览错题不该有副作用。要打勾去复习页。 -->
     <div v-if="questionDetail.open" class="modal-mask" @mousedown.self.prevent
-         @click.self="closeDetail">
+         @click.self="closeDetail()">
       <div class="modal modal--detail" role="dialog" aria-modal="true"
            aria-labelledby="detail-title">
         <div class="modal__head">
@@ -1312,7 +1312,7 @@
               <svg class="icon icon--sm"><use href="#i-edit"></use></svg>编辑
             </button>
             <button class="icon-btn" type="button" aria-label="关闭"
-                    @click="closeDetail">
+                    @click="closeDetail()">
               <svg class="icon icon--sm"><use href="#i-close"></use></svg>
             </button>
           </div>
@@ -1409,7 +1409,7 @@
 
         <div class="modal__foot">
           <span class="text-aux">只读预览，不会改动复习计划</span>
-          <button class="btn btn--secondary" type="button" @click="closeDetail">关闭</button>
+          <button class="btn btn--secondary" type="button" @click="closeDetail()">关闭</button>
         </div>
       </div>
     </div>
