@@ -938,7 +938,7 @@
     </main>
 
     <!-- ===================== 题目编辑弹窗 ===================== -->
-    <div v-if="questionEditor.open" class="modal-mask" @mousedown.prevent
+    <div v-if="questionEditor.open" class="modal-mask" @mousedown.self.prevent
          @click.self="closeQuestionEditor">
       <div class="modal" role="dialog" aria-modal="true" aria-label="题目编辑">
         <div class="modal__head">
@@ -1114,7 +1114,7 @@
     </div>
 
     <!-- ===================== 导出 PDF 弹窗 ===================== -->
-    <div v-if="exportDialog.open" class="modal-mask" @mousedown.prevent
+    <div v-if="exportDialog.open" class="modal-mask" @mousedown.self.prevent
          @click.self="exportDialog.open = false">
       <div class="modal" role="dialog" aria-modal="true" aria-label="导出 PDF">
         <div class="modal__head">

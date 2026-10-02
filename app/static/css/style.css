@@ -460,6 +460,18 @@ pre,
 
 .input::placeholder { color: var(--c-text-faint); }
 
+/* 多行输入框不能用固定的 36px 单行高度。
+   `.input` 上的 `height: 36px` 是为了统一单行控件，但 textarea 也被它
+   压成了 36px —— 多行内容看不全，视觉上像"只能输入一行"。
+   这里按 rows 自适应高度，并给内部留出上下内边距。 */
+textarea.input {
+  height: auto;
+  min-height: calc(36px * 2);
+  padding: var(--sp-tight);
+  line-height: 1.5;
+  resize: vertical;
+}
+
 .input:focus {
   outline: none;
   border-color: var(--c-primary);

@@ -868,7 +868,19 @@
        * 不这么做的话，Tab 会跑到弹窗背后的侧边栏与顶部栏上 ——
        * 视觉上焦点"消失"在遮罩后面，键盘用户无法操作弹窗。
        */
-      function trapFocus(event) {
+      /**
+ * 遮罩上的 @mousedown.self.prevent 为什么必须带 .self：
+ *
+ * 不带的写法（绑在 .modal-mask 上、不限定目标）会让**弹窗内部**的
+ * mousedown 也冒泡上来被 preventDefault。浏览器"点击聚焦"属于默认行为，
+ * 被阻止后输入框拿不到焦点 —— 表现就是"点输入框点不进去、打字落到了
+ * 上次聚焦的按钮上、下拉也点不开"，而按钮点击仍然正常（按钮靠 click 触发，
+ * 不依赖聚焦），所以现象看起来很像"只有文字输入坏了"。
+ *
+ * 加 .self 后：只有直接点在遮罩空白处才阻止默认行为（避免焦点跑到 body、
+ * 关闭时无法归还），点在弹窗内部完全不影响。
+ */
+function trapFocus(event) {
         var modal = openModalEl();
         if (!modal) { return; }
         var items = Array.prototype.filter.call(

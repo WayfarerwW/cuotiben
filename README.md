@@ -197,6 +197,7 @@ schtasks /create /tn "cuotiben-backup" /sc daily /st 03:00 ^
 
 ```bash
 python tools/verify_launch.py          # 启动可访问性：run.py 起服务、静态资源无 404、Vue 挂载
+python tools/verify_input.py            # 真实输入：点击聚焦、真实按键打字、下拉选择、标签回车
 python tools/verify_responsive.py      # 响应式：三个断点 + Esc/焦点移入（真浏览器）
 python tools/verify_a11y.py            # 可访问性：锁滚动/Tab 循环/焦点归还/下拉与标签键盘/数据页
 python tools/check_contrast.py         # 对比度：文字×底色组合是否达 WCAG AA 4.5:1
@@ -252,6 +253,11 @@ python tools/verify_ui.py http://127.0.0.1:8941/ <临时库路径>
 > 中间件 + 根路径返回 `index.html`），不需要这个脚手架。
 > 更省事的做法是直接跑 `python tools/verify_a11y.py <port>`，
 > 它自己会起脚手架、造数据、驱动浏览器。
+>
+> `verify_input.py` 走 Chrome DevTools Protocol 发**真实鼠标与键盘事件**，
+> 需要额外装一个自检专用依赖：`pip install websocket-client`
+> （不是运行依赖，没装在 `requirements.txt` 里）。它存在的理由见
+> [AGENTS.md](AGENTS.md) 3.2「点击/输入类断言必须用真实事件」。
 
 ## GitHub 自动同步（可选，默认关闭）
 

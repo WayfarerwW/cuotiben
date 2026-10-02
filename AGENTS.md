@@ -73,6 +73,20 @@
   所以 `:disabled="someString"`（忙碌时 `'backup'`、空闲时 `''`）
   会让按钮**永久禁用**、点了毫无反应。本项目的做法：
   `dataBusy` 是布尔 ref，另外用 `dataBusyKind` 只负责按钮文案。
+- **遮罩上的 `@mousedown` 必须带 `.self`，否则输入框点不进去**：
+  写 `@mousedown.prevent`（绑在 `.modal-mask` 上、不限定目标）时，
+  **弹窗内部**的 mousedown 会冒泡上来被 `preventDefault`；而"点击聚焦"
+  是浏览器的默认行为，被阻止后输入框拿不到焦点 —— 现象是
+  "点输入框点不进去、打字落到上次聚焦的按钮上、下拉也打不开"，
+  但按钮点击仍然正常（按钮靠 `click` 触发，不依赖聚焦），
+  所以看起来很像"只有文字输入坏了"。正确写法：`@mousedown.self.prevent`。
+- **点击/输入类断言必须用真实事件，不能用 DOM API 造数据**：
+  `el.value = 'x'` + 派发 `input`、或 `el.click()` 都会**绕过浏览器默认
+  行为**（点击聚焦、按键生成字符），因此上面那条缺陷它们一律测不出来 ——
+  这不是理论风险，是实际发生过的：全部浏览器自检都是绿的，而用户
+  连一个字都打不进去。正确做法是用 `tools/verify_input.py`
+  （CDP 真实鼠标 + 真实按键），并断言 `document.activeElement` 与输入值。
+  发按键时**只发 keyDown（带 text）**，不要再补 `char`，否则字符翻倍。
 - **无头浏览器验证要关掉周期任务**：`--virtual-time-budget` 会快进虚拟时间，
   app 里的 60s 通知轮询 / 5s 心跳在预算内被触发很多次，能把一次验证从
   几秒拖到几百秒。测试页用 `?nopoll=1` 让 app 跳过这两个 interval
