@@ -466,6 +466,116 @@ def run_cases(cdp: CDP) -> int:  # noqa: C901
            again == "done" and ("撤销" in (warn or "") or "打勾" in (warn or "")),
            f"{again} / {warn}")
 
+    section("移除图片会真的删掉物理文件（不是只解关联）")
+    # 回到题目管理，重开弹窗
+    cdp.js("""(() => {
+      const n = Array.from(document.querySelectorAll('.nav__item'))
+        .find(x => x.textContent.includes('题目管理'));
+      if (n) n.click();
+      return !!n;
+    })()""")
+    time.sleep(1.5)
+    cdp.js("""(() => {
+      const b = Array.from(document.querySelectorAll('button'))
+        .find(x => x.textContent.trim().includes('新增题目'));
+      if (b) b.click();
+      return !!b;
+    })()""")
+    time.sleep(1.5)
+
+    # 选一个大类
+    sel = cdp.js("""(() => {
+      const el = document.getElementById('q-folder');
+      const opt = Array.from(el.options).find(o => !o.disabled);
+      if (!opt) return 'NO_OPTION';
+      el.value = opt.value;
+      el.dispatchEvent(new Event('change', {bubbles: true}));
+      return opt.value;
+    })()""")
+    expect("能选到所属大类", sel not in ("NO_OPTION", None), sel)
+
+    # 造一张 JPEG 并上传
+    uploaded = cdp.js("""(async () => {
+      const cv = document.createElement('canvas');
+      cv.width = 40; cv.height = 30;
+      cv.getContext('2d').fillStyle = '#3366cc';
+      cv.getContext('2d').fillRect(0, 0, 40, 30);
+      const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.9));
+      const file = new File([blob], 'del.jpg', {type: 'image/jpeg'});
+      const input = document.querySelector('input[type="file"]');
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      input.files = dt.files;
+      input.dispatchEvent(new Event('change', {bubbles: true}));
+      return 'sent';
+    })()""")
+    expect("已触发图片上传", uploaded == "sent", uploaded)
+    time.sleep(4.0)
+
+    shown = cdp.js("document.querySelectorAll('.img-list img').length")
+    expect("上传后出现缩略图", isinstance(shown, int) and shown >= 1, f"{shown} 张")
+
+    # 取出该图的服务端信息，用于之后断言文件已删
+    img_info = cdp.js("""(async () => {
+      const r = await fetch('/questions').then(r => r.json());
+      // 上传的图还没保存，question_images 里是孤儿行；直接从表单状态拿
+      const el = document.getElementById('app');
+      const comp = el && el._vnode && el._vnode.component;
+      const imgs = comp ? comp.setupState.questionForm.images : [];
+      return JSON.stringify(imgs.map(i => ({id: i.id, url: i.url})));
+    })()""")
+    expect("表单里的图片带了 question_images id（删除物理文件需要它）",
+           '"id":' in (img_info or "") and '"id":null' not in (img_info or ""),
+           img_info)
+
+    # 点「×」移除
+    removed = cdp.js("""(() => {
+      const b = document.querySelector('.img-item__remove');
+      if (!b) return 'NO_X';
+      b.click();
+      return 'clicked';
+    })()""")
+    expect("能点到缩略图上的移除按钮", removed == "clicked", removed)
+    time.sleep(1.0)
+
+    after_remove = cdp.js("document.querySelectorAll('.img-list img').length")
+    expect("移除后缩略图消失", after_remove == 0, f"{after_remove} 张")
+
+    # 关键：**此时文件还不该被删**（点×不算数，要等保存成功）
+    url = None
+    if img_info and img_info.startswith("["):
+        try:
+            url = json.loads(img_info)[0]["url"]
+        except Exception:
+            url = None
+    if url:
+        exists_before_save = cdp.js(f"""fetch({url!r}, {{method: 'HEAD'}})
+          .then(r => String(r.status)).catch(() => 'ERR')""")
+        expect("点×之后文件**还在**（等保存成功再删，避免取消保存导致死链）",
+               exists_before_save == "200", f"HTTP {exists_before_save}")
+
+        # 保存 -> 触发真正删除
+        cdp.js("""(() => {
+          const ta = document.getElementById('q-stem');
+          const setter = Object.getOwnPropertyDescriptor(
+            window.HTMLTextAreaElement.prototype, 'value').set;
+          setter.call(ta, '删图测试题');
+          ta.dispatchEvent(new Event('input', {bubbles: true}));
+          return 'filled';
+        })()""")
+        time.sleep(0.4)
+        cdp.js("""(() => {
+          const b = Array.from(document.querySelectorAll('.modal button'))
+            .find(x => /保存|创建/.test(x.textContent));
+          if (b) b.click();
+          return !!b;
+        })()""")
+        time.sleep(3.5)
+        exists_after_save = cdp.js(f"""fetch({url!r}, {{method: 'HEAD'}})
+          .then(r => String(r.status)).catch(() => 'ERR')""")
+        expect("保存成功后物理文件**已被删除**", exists_after_save != "200",
+               f"HTTP {exists_after_save}")
+
     print("\n" + "-" * 74)
     print(f"合计 {OK + FAIL} 项，通过 {OK}，失败 {FAIL}")
     for name in FAILED:

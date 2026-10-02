@@ -224,13 +224,27 @@
       var questionForm = reactive({
         id: null, folder_id: null, stem: '', answer: '', tags: [], is_starred: false,
         /**
-         * 题目图片：[{ url, kind }]，kind 为 'stem'（题干图）或 'answer'（答案图）。
+         * 题目图片：[{ id, url, kind, isNew }]。
          *
-         * 以前只存 url 数组，无法表达图片属于哪一面 —— 而需求 2.3 明确
-         * "题干和答案都允许为空（纯图片题目）"，答案侧同样要能放图。
+         * `id` 是 question_images 主键 —— `DELETE /upload/image/{id}` 需要它，
+         * 少了它就无法真正删除物理文件（只会解关联，照片永久留在 uploads/）。
+         * `isNew` = 本次会话刚上传、还没保存过的孤儿图。
          */
         images: [],
       });
+      /**
+       * 待删除的图片（点「×」时移到这里）。
+       *
+       * 为什么**不立刻**删：表单是"暂存状态"（本项目有草稿保护，AGENTS 4.5），
+       * 点×后又取消保存的话，文件已经从磁盘删掉、表单却还引用它，
+       * 保存后就是一个 404 的图。所以统一等**保存成功**后再删。
+       *
+       * 只收 `isNew` 的图：那种是本次刚上传、且尚未挂到任何已保存题目上的
+       * 孤儿，删掉物理文件是安全的。已经保存过的题目图片只做解关联
+       * （同一张图可能被别的题引用，后端 delete_image 会连带解绑所有引用 ——
+       * 那是破坏性的，不能由"点了个×"触发）。
+       */
+      var pendingImageDeletes = ref([]);
       /** 正在上传的图片数量（>0 时显示"上传中"并禁用保存，避免半截状态入库）。 */
       var imageUploading = ref(0);
       /** 上传失败的提示（逐条列出，不要只弹 toast 就丢）。 */
@@ -1252,9 +1266,15 @@ function trapFocus(event) {
         questionForm.is_starred = q ? !!q.is_starred : false;
         questionForm.images = q
           ? (q.images || []).map(function (img) {
-              return { url: imageUrl(img.file_path), kind: img.kind || 'stem' };
+              return {
+                id: img.id,
+                url: imageUrl(img.file_path),
+                kind: img.kind || 'stem',
+                isNew: false,
+              };
             })
           : [];
+        pendingImageDeletes.value = [];
         imageErrors.value = [];
         tagDraft.value = '';
         tagSuggestions.value = [];
@@ -1358,7 +1378,9 @@ function trapFocus(event) {
               if (!res || !res.file_path) {
                 throw new Error('上传接口未返回 file_path');
               }
-              questionForm.images.push({ url: imageUrl(res.file_path), kind: kind });
+              questionForm.images.push({
+                id: res.id, url: imageUrl(res.file_path), kind: kind, isNew: true,
+              });
               onQuestionEdit();
             })
             .catch(function (err) {
@@ -1370,12 +1392,38 @@ function trapFocus(event) {
         });
       }
 
-      /** 从表单里移除一张图（只解除关联；物理文件删除走 DELETE /upload/image）。 */
+      /** 从表单里移除一张图。真正删文件在保存成功之后（见 pendingImageDeletes）。 */
       function removeQuestionImage(kind, url) {
+        var removed = questionForm.images.filter(function (i) {
+          return i.kind === kind && i.url === url;
+        });
         questionForm.images = questionForm.images.filter(function (i) {
           return !(i.kind === kind && i.url === url);
         });
+        // 本次会话刚上传、还没保存过的图：记下来，保存成功后删掉文件
+        removed.forEach(function (i) {
+          if (i.isNew && i.id) { pendingImageDeletes.value.push(i.id); }
+        });
         onQuestionEdit();
+      }
+
+      /**
+       * 保存成功后清理"被移除的新上传图片"。
+       *
+       * 失败不打扰用户：物理文件没删掉只是占点磁盘，而弹一个错误提示会
+       * 让人以为保存失败了。只记录到控制台，并让 /data/paths 的图片计数
+       * 能反映出真实情况。
+       */
+      function flushPendingImageDeletes() {
+        var ids = pendingImageDeletes.value.slice();
+        pendingImageDeletes.value = [];
+        ids.forEach(function (imageId) {
+          API.deleteImage(imageId).catch(function (err) {
+            // eslint-disable-next-line no-console
+            console.warn('[image] 删除图片 ' + imageId + ' 失败：',
+              err && err.message ? err.message : err);
+          });
+        });
       }
 
       function addTag() {
@@ -1550,6 +1598,8 @@ function trapFocus(event) {
           questionDraftStatus.value = '';
           toast(questionEditor.id ? '已保存' : '题目已创建');
           loadDraftKeyList();
+          // 保存已成功，此时删掉"本次上传又被移除"的图是安全的
+          flushPendingImageDeletes();
           return Promise.all([loadQuestions(), loadFolderTree()]);
         }).then(function () {
           questionSaving.value = false;
@@ -1987,6 +2037,7 @@ function trapFocus(event) {
         removeQuestionImage: removeQuestionImage,
         imagesOf: imagesOf,
         imageUrl: imageUrl,
+        pendingImageDeletes: pendingImageDeletes,
         imageUploading: imageUploading,
         imageErrors: imageErrors,
         promptNewSubject: promptNewSubject,
