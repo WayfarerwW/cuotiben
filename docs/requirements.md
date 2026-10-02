@@ -25,6 +25,17 @@
 | PDF 导出 | WeasyPrint + Jinja2 |
 | 启动 | uvicorn，浏览器访问 localhost:8000 |
 
+**运行时与开发时要分开看**（原本只写了一句"纯本地单机"，容易被理解成
+"这个项目永远不会联网"，与第五节的作品同步相矛盾）：
+
+- **运行时完全离线**：应用不发起任何网络请求，不上传任何第三方服务器，
+  无多用户、无登录鉴权。PDF 用的是本机字体文件，图片只存本机。
+- **开发时可选联网**：GitHub 自动同步（AGENTS.md 五）仅用于**开发阶段**
+  的代码与数据备份，不影响应用运行。它默认关闭
+  （`GIT_SYNC_ENABLED=false`），且**只同步代码与文档**——
+  `data/`、`uploads/`、`backups/` 被 `.gitignore` 忽略，个人数据不上传；
+  推送用的 token 也不落盘（`GIT_ASKPASS` 临时注入，不写 `.git/config`）。
+
 ### 1.5 运行环境
 - OS：Windows / macOS / Linux
 - 浏览器：Chromium 内核（Chrome / Edge）
@@ -287,7 +298,20 @@ text
 
 掌握率分析
 
-ECharts 图表
+图表用**自建 CSS/SVG** 实现，**不引入图表库**（如 ECharts）。
+
+- 与 AGENTS.md 3.2「不使用组件库、纯本地离线运行不允许用 CDN」一致：
+  可视化能力本项目自己实现，避免引入 1MB 级依赖 + 其 LICENSE/版本登记，
+  也避免 canvas 图表的视觉与 ui-design 的色板/圆角/字重风格打架。
+- 各图形的实现方式：
+  | 图形 | 实现 |
+  |---|---|
+  | 饼图/环形图 | CSS `conic-gradient` |
+  | 柱状图/条形图/进度 | CSS 宽度（`width: N%`）+ `--c-primary` 填充 |
+  | 折线图 | 内联 SVG `<polyline>` / `<path>` |
+  | 词云/标签云 | 按计数映射字号（`font-size` + 标签组件） |
+- 统计项的现状：学科分布（进度条）、高频标签（词云）、掌握率、
+  记忆曲线间隔序列、补卡统计。
 
 3. 数据模型
 3.1 folders
@@ -536,6 +560,32 @@ DELETE	/upload/image/{id}	删除
 - 上传时就先落一条 `question_images`（此时 `question_id` 为空），
   因为 `DELETE /upload/image/{id}` 需要主键；录题时 `_sync_images`
   按 `(路径, kind)` 复用该行，不会产生重复记录。
+
+方法	路径	说明
+GET	/upload/orphans	列出孤儿图片（只读）
+
+`GET /upload/orphans` 响应字段：
+`count`、`total_bytes`、`files`、`note`
+
+`files` 每项字段：`file_path`、`url`、`size`
+
+- 「孤儿」= `uploads/` 下存在、但**没有任何未删除题目**在引用的文件。
+  三类都算孤儿：完全没有 `question_images` 记录的（上传后没保存就关掉弹窗）、
+  `question_id` 为 NULL 的（上传后从未拿去建题）、以及挂在**已软删除**题目上的
+  （题目在界面已不可见，图片不会再被渲染）。
+- 被未删除题目引用的图片**不会**列出。`.gitkeep` 永远跳过。
+- `note` 说明上述规则，避免用户以为列出来的都是垃圾文件。
+
+方法	路径	说明
+POST	/upload/cleanup	清理孤儿图片
+
+`POST /upload/cleanup` 响应字段：
+`found`、`deleted`、`failed`、`freed_bytes`、`deleted_files`、`failed_files`
+
+- `failed` 单独报出来：删不掉的文件（被占用、权限）必须让人知道，
+  不能只报 `deleted` 让用户以为全清干净了。
+- **防目录穿越**：扫描与删除两层都校验路径解析后必须仍在 `uploads/` 之内；
+  实际 unlink 走 `image_service.delete_file`，它内部还有一层同样的检查。
 
 4.5 复习
 

@@ -2,13 +2,22 @@
 
 ## 一、项目定位
 
-纯本地单机运行的错题本 Web 应用，不上传服务器，不联网，无多用户。
+纯本地单机运行，运行时完全离线，不上传任何第三方服务器，无多用户。
+GitHub 同步仅用于开发阶段的代码与数据备份，不影响应用运行。
 
 - 后端：FastAPI + SQLite + SQLAlchemy
 - 前端：Vue 3 + 原生 HTML/CSS（响应式）
 - 图片：Pillow + pillow-heif
 - PDF：WeasyPrint + Jinja2
 - 启动：`python run.py`，浏览器访问 `http://localhost:8000`
+
+> 「运行时」与「开发时」必须分开说（原文只写"不联网"，与第五节的
+> GitHub 同步自相矛盾）：
+>
+> - **运行时**：不发起任何网络请求。PDF 用本机字体、图片只存本机。
+> - **开发时**：第五节的作品同步会联网，但默认关闭
+>   （`GIT_SYNC_ENABLED=false`），且只同步代码与文档 ——
+>   `data/`、`uploads/`、`backups/` 被 `.gitignore` 忽略，个人数据不上传。
 
 ## 二、必读文档
 
@@ -43,6 +52,11 @@
   设计说明书第 2、5 节本身就是一套完整的设计系统（色彩/字号/间距/圆角/
   按钮/标签/角标），引入组件库只会带来一套需要逐项覆盖的默认样式，
   且很多组件库不支持无构建工具的 `<script>` 直接引入。
+- **统计图表也用自建 CSS/SVG 实现，不引入图表库**（如 ECharts）：
+  这是"不使用组件库"的延伸。饼图/环形图用 `conic-gradient`，
+  柱状图与进度用 CSS 宽度，折线图用内联 SVG，词云按计数映射字号。
+  理由：不引入 1MB 级依赖与其 LICENSE/版本登记；canvas 图表的视觉
+  容易和 ui-design 的色板、圆角、字重打架。
 - **vendor 第三方库的规矩**：确实需要复杂组件（日期选择、图表等）而必须
   引入第三方库时，把文件放到 `app/static/js/vendor/`，并附上对应的
   LICENSE 文件；同时在 `README.md` 的「第三方依赖」一节登记
@@ -306,21 +320,29 @@ cuotiben/
 ├── docs/                  # 需求 + UI 说明书（默认不改，变更需明确指示）
 ├── AGENTS.md              # 本文件
 ├── app/                   # 后端 + 前端
-│   ├── routers/           # 路由
-│   ├── services/          # 业务逻辑
+│   ├── routers/           # 路由（folders/questions/tags/review/notes/
+│   │                      #   settings/upload/export/data/sync）
+│   ├── services/          # 业务逻辑（含 data_service / sync_service
+│   │                      #   / image_service）
 │   ├── models/            # ORM 模型
 │   ├── templates/         # PDF 模板
+│   ├── database.py        # 引擎/会话/init_db + 轻量迁移（LIGHT_MIGRATIONS）
+│   ├── schemas.py         # 请求/响应契约
+│   ├── main.py            # 应用装配：register_routers + 中间件 + lifespan
 │   └── static/            # 前端
 │       ├── index.html
 │       ├── css/style.css
 │       └── js/
 │           ├── api.js
-│           └── app.js
-├── data/                  # SQLite 数据库
-├── uploads/               # 图片
-├── backups/               # 备份
+│           ├── app.js
+│           └── vendor/    # 第三方库（须附 LICENSE 并在 README 登记）
+├── tools/                 # 环境自检与验证脚本（verify_*.py / check_contrast.py 等）
+├── data/                  # SQLite 数据库（不入库）
+├── uploads/               # 图片（不入库）
+├── backups/               # 备份（不入库）
 ├── fonts/                 # 中文字体
 ├── requirements.txt
+├── .env.example           # 配置模板（.env 不入库）
 ├── run.py                 # 启动入口（--dev 才开热重载）
 ├── backup.py              # 每日备份：backups/cuotiben_{date}.db，保留 30 天
 ├── start.bat
