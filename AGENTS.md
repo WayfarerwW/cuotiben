@@ -344,7 +344,8 @@ cuotiben/
 ├── requirements.txt
 ├── .env.example           # 配置模板（.env 不入库）
 ├── run.py                 # 启动入口（--dev 才开热重载）
-├── backup.py              # 每日备份：backups/cuotiben_{date}.db，保留 30 天
+├── backup.py              # 每日备份：backups/cuotiben_{date}.db + uploads_{date}/
+│                          #   （图片用硬链接，零额外磁盘；保留 30 天）
 ├── start.bat
 └── start.sh
 ```

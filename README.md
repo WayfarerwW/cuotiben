@@ -59,7 +59,7 @@ cuotiben/
 │           └── vendor/    # vendored 第三方库（见「第三方依赖」）
 ├── data/                  # SQLite 数据库（data/*.db 已忽略）
 ├── uploads/               # 图片（按年月日分片，文件名 UUID）
-├── backups/               # 数据库每日备份
+├── backups/               # 备份（每日：库 + 图片快照）
 ├── fonts/                 # 中文字体（PDF 导出用，Noto Sans SC）
 ├── tools/                 # 环境自检与验证脚本
 ├── poc_out/               # 自检产物（已在 .gitignore 忽略）
@@ -159,15 +159,20 @@ chmod +x start.sh
 
 ### 4. 每日备份（建议配置）
 
-`backup.py` 把 `data/cuotiben.db` 复制成 `backups/cuotiben_{YYYY-MM-DD}.db`，
-并只保留最近 30 天：
+`backup.py` 每天备份**两份并列的产物**，并各自只保留最近 30 天：
+
+| 产物 | 内容 |
+|---|---|
+| `backups/cuotiben_{YYYY-MM-DD}.db` | 数据库（一致性快照） |
+| `backups/uploads_{YYYY-MM-DD}/` | `uploads/` 图片的当日快照 |
 
 ```bash
-python backup.py              # 备份今天 + 清理超过 30 天的
+python backup.py              # 备份今天（库 + 图片）+ 清理超过 30 天的
 python backup.py --keep 7     # 只保留最近 7 天
 python backup.py --list       # 列出已有备份和占用
 python backup.py --force      # 今天已备份过也重做
 python backup.py --dry-run    # 只显示会做什么
+python backup.py --no-images  # 只备份数据库，不备图片
 ```
 
 排期（三者选一）：
@@ -192,6 +197,16 @@ schtasks /create /tn "cuotiben-backup" /sc daily /st 03:00 ^
 > 一直没备份。备份用的是 SQLite 自己的 `backup()` API 做一致性快照，
 > 不直接拷 `.db` 文件（有未提交事务或开着 WAL 时，直接拷可能拿到
 > 不一致的快照）。
+
+> **图片用硬链接**：图片是 UUID 命名的不可变文件，所以快照用硬链接
+> 建立 —— 内容必然与源一致，且**不占额外磁盘**（30 天的图片备份不会把
+> 同一张图存 30 份）。跨卷或文件系统不支持时自动退回复制，目录结构不变。
+>
+> **还原**：`cuotiben_{日期}.db` 拷回 `data/`，
+> `uploads_{日期}/` 里的内容拷回 `uploads/`。
+>
+> 为什么必须连图片一起备：图片一旦被误删，数据库记录还在、文件没了，
+> `GET /uploads/...` 全变 404 —— 而只含数据库的备份**救不回来**。
 
 ### 环境自检
 
@@ -218,7 +233,7 @@ python tools/verify_tags.py            # 标签：归一化、复用、联想、
 python tools/verify_notes.py           # 记事本：增删查改、软删除、标题/内容模糊搜索
 python tools/verify_settings.py        # 设置：默认值初始化、批量更新、校验、容错
 python tools/verify_data_service.py    # 数据说明页：路径解析、手动备份、导出 JSON
-python tools/verify_backup.py          # 每日备份脚本：文件名/保留策略/一致性快照/启动兜底
+python tools/verify_backup.py          # 每日备份：文件名/保留策略/一致性快照/图片快照与还原/启动兜底
 python tools/verify_sync.py            # GitHub 自动同步：真推到临时 bare 仓库、token 不落盘
 python tools/verify_design_tokens.py   # 前端：style.css 与 UI 说明书的色彩/字体/间距/圆角/阴影/断点一致性
 python tools/verify_font.py            # 中文 PDF 渲染与字体嵌入
@@ -314,7 +329,7 @@ GitHub 自动同步，且它**只同步代码文档，不含你的题库与图�
 |---|---|---|
 | 数据库 | `data/cuotiben.db` | 否（`.gitignore` 忽略） |
 | 图片 | `uploads/YYYY/MM/DD/{uuid}.jpg` | 否 |
-| 每日备份 | `backups/cuotiben_{YYYY-MM-DD}.db`（保留 30 天） | 否 |
+| 每日备份 | `backups/cuotiben_{YYYY-MM-DD}.db` + `backups/uploads_{YYYY-MM-DD}/`（各保留 30 天） | 否 |
 | 手动备份 | `backups/{YYYYMMDD-HHMMSS}/`（数据库 + uploads 副本） | 否 |
 | 中文字体 | `fonts/NotoSansSC-VF.ttf`（Noto Sans SC，SIL OFL 1.1） | 是 |
 | 环境变量 | `.env`（由 `.env.example` 复制而来） | 否（**含密钥，绝不入库**） |
@@ -323,10 +338,12 @@ GitHub 自动同步，且它**只同步代码文档，不含你的题库与图�
 数据库、图片、备份三个目录被 `.gitignore` **刻意**忽略，只有 `.gitkeep`
 占位文件入库，所以 clone 下来目录结构是完整的。
 
-> 关于"每日备份"与"手动备份"的区别：前者是**单文件快照**，只含数据库，
-> 靠文件名日期保留最近 30 份，适合每天自动跑；后者是**一整个目录**，
-> 含数据库 + `uploads/` 图片，在数据说明页点「手动备份」触发，适合做
-> 迁移或重要改动前的存档。两者互不干扰，清理前者不会碰到后者。
+> 关于"每日备份"与"手动备份"的区别：**两者现在都包含数据库与图片**。
+> 每日备份是固定的两份产物（`cuotiben_{日期}.db` + `uploads_{日期}/`，
+> 图片用硬链接），按日期保留最近 30 份，适合每天自动跑；
+> 手动备份是 `backups/{YYYYMMDD-HHMMSS}/` 一整个目录（数据库 +
+> `uploads/` 实际副本），在数据说明页点「手动备份」触发，适合做迁移
+> 或重要改动前的存档。两者互不干扰，清理每日备份不会碰到手动备份。
 
 **迁移到另一台机器**：把 `data/`、`uploads/`、`backups/`（以及你的
 `.env`）一起复制过去即可。
