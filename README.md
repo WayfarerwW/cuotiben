@@ -197,7 +197,9 @@ schtasks /create /tn "cuotiben-backup" /sc daily /st 03:00 ^
 
 ```bash
 python tools/verify_launch.py          # 启动可访问性：run.py 起服务、静态资源无 404、Vue 挂载
-python tools/verify_input.py            # 真实输入：点击聚焦、真实按键打字、下拉选择、标签回车
+python tools/verify_input.py           # 真实输入：点击聚焦、真实按键打字、下拉选择、标签回车、撤销打勾
+python tools/verify_detail.py          # 题目详情：答案默认遮住（真不渲染）、揭开/收起、只读、深链接
+python tools/verify_orphans.py         # 孤儿图片：判定规则、清理、防目录穿越、uploads 隔离
 python tools/verify_responsive.py      # 响应式：三个断点 + Esc/焦点移入（真浏览器）
 python tools/verify_a11y.py            # 可访问性：锁滚动/Tab 循环/焦点归还/下拉与标签键盘/数据页
 python tools/check_contrast.py         # 对比度：文字×底色组合是否达 WCAG AA 4.5:1
