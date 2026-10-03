@@ -51,8 +51,8 @@ SCOPE_LABELS: dict[str, str] = {
 #: 熟练度中文名。与前端 app.js 的 MASTERY_LABEL 保持一致
 #: （后端没有别处定义过，先落在本模块，避免为两个词新建常量模块）。
 MASTERY_LABELS: dict[str, str] = {
-    MASTERY_STILL_WRONG: "仍易错",
-    MASTERY_MASTERED: "已拿下",
+    MASTERY_STILL_WRONG: "未完全掌握",
+    MASTERY_MASTERED: "已掌握",
 }
 
 

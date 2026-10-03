@@ -348,9 +348,20 @@ async function run() {
   const cards = allInDoc(iframe, '.review-card');
   check('复习页渲染复习卡片', cards.length > 0, cards.length + ' 张');
   if (cards.length) {
-    check('复习卡片含四档评价按钮',
-      allInDoc(iframe, '.review-card__actions button').length >= 4,
-      allInDoc(iframe, '.review-card__actions button').length);
+    // 打勾评价已由 4 档收敛为 2 档（requirements 2.14）
+    const rateBtns = allInDoc(iframe, '.review-card__actions button')
+      .filter(b => /未完全掌握|已掌握/.test(b.textContent || ''));
+    check('**复习卡片含 2 档评价按钮（未完全掌握 / 已掌握）**',
+      rateBtns.length === 2, rateBtns.length + ' 个');
+    check('评价按钮文案正确',
+      rateBtns.some(b => (b.textContent || '').includes('未完全掌握')) &&
+      rateBtns.some(b => (b.textContent || '').includes('已掌握')),
+      rateBtns.map(b => (b.textContent || '').trim()).join(' / '));
+    check('不再出现旧的 4 档文案',
+      !/完全不会|有点模糊|基本掌握/.test(
+        allInDoc(iframe, '.review-card__actions').map(
+          e => e.textContent || '').join('')),
+      '旧档位已移除');
     const showBtn = inDoc(iframe, '.review-card__actions', '显示答案') ||
       inDoc(iframe, '.review-card button', '显示答案');
     if (showBtn) {

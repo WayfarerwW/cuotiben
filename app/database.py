@@ -114,6 +114,10 @@ LIGHT_MIGRATIONS: tuple[tuple[str, str, str, str], ...] = (
     # question_images.kind：区分题干图 / 答案图（requirements 3.3）。
     # 默认 stem —— 加字段之前只存在一种位置，老数据的语义就是题干图。
     ("question_images", "kind", "VARCHAR(16)", "stem"),
+    # review_records.mastery_streak：连续达到「已掌握」的次数（requirements 2.14）。
+    # 默认 0 —— 加字段之前的打勾都发生在"还没有连续计数"的旧规则下，
+    # 从 0 起算最保守：用户需要重新连续攒够次数才会毕业。
+    ("review_records", "mastery_streak", "INTEGER", "0"),
 )
 
 

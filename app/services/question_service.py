@@ -576,11 +576,33 @@ def set_starred(db: Session, question_id: int, starred: bool) -> Question:
 
 
 def set_mastery(db: Session, question_id: int, mastery_status: str) -> Question:
-    """切换正误状态（requirements.md 2.14）。"""
+    """切换正误状态（requirements.md 2.14）。
+
+    改状态时**同步重置连续掌握进度**（当前生效那条 review_record）：
+
+      - 改成「已掌握」 -> 你也算毕业，不再进复习队列
+      - 改成「未完全掌握」 -> 重新进队列：连续次数归零、间隔回第 1 档，
+        要重新攒够次数才再毕业
+
+    不重置的话会出现两种情况，都不对：
+      1. 手动改回「未完全掌握」后记录里还留着 streak=4，
+         用户打一次勾就立刻又毕业 —— 与"重新来过"的预期不符；
+      2. 只把状态改回来、不重排 next_review_at，而毕业那次已把时间推到末档
+         （30 天后），题目并不会"尽快回到队列"。
+
+    历史记录里的进度**保持原样**（审计痕迹，和软删除一样不改写过去）。
+    """
     if mastery_status not in (MASTERY_STILL_WRONG, MASTERY_MASTERED):
         raise QuestionError(f"非法的 mastery_status：{mastery_status}")
     question = get_question(db, question_id)
     question.mastery_status = mastery_status
+
+    # 惰性 import：review_service 在模块级也引用 question 相关模型，
+    # 放在函数里避免成环。
+    from . import review_service
+
+    review_service.reset_mastery_progress(db, question_id)
+
     db.commit()
     db.refresh(question)
     return get_question(db, question.id)

@@ -139,7 +139,9 @@ def main() -> int:
             t0 = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
             r1 = rsvc.check(db, q3.id, now=t0)
             check("未到期的题也能打勾（不校验待复习状态）", r1 is not None, f"record id={r1.id}")
-            check("打勾后 interval_index 重置为 0", r1.interval_index == 0,
+            # 语义已变更（2.14/5.1）：打勾按 mastery 逐档推进，不再是"恒为 0"。
+            # 这里不传 mastery（未表态）—— 未表态走"回到第 1 档"，所以仍是 0。
+            check("未表态打勾 -> interval_index=0（回第 1 档）", r1.interval_index == 0,
                   str(r1.interval_index))
             check("打勾后 next_review_at = now + 3 天",
                   abs((r1.next_review_at - t0).total_seconds() / 86400 - 3) < 0.01,
@@ -165,8 +167,11 @@ def main() -> int:
             # mastery 传入时写入 mastery_level
             r4 = rsvc.check(db, q3.id, mastery=2, now=t2 + timedelta(days=1))
             check("打勾记录 mastery_level", r4.mastery_level == 2, str(r4.mastery_level))
-            check("mastery=2 仍重置 interval_index=0（取 5.2 口径，非 5.1 推进）",
-                  r4.interval_index == 0, str(r4.interval_index))
+            # 语义已变更（2.14）：打勾评价已压成 2 档（0=未完全掌握 / 3=已掌握）。
+            # 历史取值 1/2 仍可写入记录（老数据兼容），但按"未完全掌握"处理 -> 回第 1 档。
+            check("mastery=2（未完全掌握一类）-> interval_index 回 0 且连续次数归零",
+                  r4.interval_index == 0 and r4.mastery_streak == 0,
+                  f"idx={r4.interval_index} streak={r4.mastery_streak}")
             r5 = rsvc.check(db, q3.id, now=t2 + timedelta(days=2))
             check("不传 mastery 时 mastery_level=0", r5.mastery_level == 0)
 
@@ -606,6 +611,175 @@ def main() -> int:
                   f"today={st['today_backfill_count']} streak={st['consecutive_days']}")
 
         engine3.dispose()
+
+    # ==================================================================
+    # 连续 N 次「已掌握」→ 毕业（requirements.md 2.14 / 5.1）
+    # ==================================================================
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp4:
+        from sqlalchemy.orm import Session as _S4
+
+        from app.database import Base as _Base4
+        from app.database import create_db_engine as _create4
+        from app.services import question_service as qsvc4
+        from app.services import review_service as rsvc4
+        from app.services import settings_service as ss4
+
+        engine4 = _create4(f"sqlite:///{(Path(tmp4) / 'streak.db').as_posix()}")
+        _Base4.metadata.create_all(bind=engine4)
+        Sess4 = lambda: _S4(bind=engine4)  # noqa: E731
+
+        base = datetime(2026, 7, 1, 4, 0, tzinfo=UTC)   # 本地 12:00
+        print("\n-- 连续 N 次「已掌握」-> 毕业（需求 2.14 / 5.1）--")
+
+        with Sess4() as db:
+            ss4.ensure_default_settings(db)
+            intervals = ss4.get_intervals(db)
+            threshold = len(intervals)
+            print(f"   间隔序列 = {intervals}，毕业阈值 = {threshold} 次")
+
+            from app.models import Question
+            from app.models.questions import (
+                MASTERY_MASTERED,
+                MASTERY_STILL_WRONG,
+            )
+            from app.services import folder_service as fsvc4
+
+            subj = fsvc4.create_folder(db, "高等数学")
+            cat = fsvc4.create_folder(db, "极限", parent_id=subj.id)
+
+            def new_q(stem: str) -> int:
+                q = qsvc4.create_question(db, folder_id=cat.id, stem=stem,
+                                         answer="1")
+                return q.id
+
+            def make_due(qid: int, at: datetime) -> None:
+                """把该题最新记录排到 at 之前，使它 today 到期。"""
+                rec = rsvc4.current_record(db, qid)
+                rec.next_review_at = at - timedelta(hours=1)
+                db.commit()
+
+            def status_of(qid: int) -> str:
+                db.expire_all()
+                return db.get(Question, qid).mastery_status
+
+            # ---------------- 1. 逐档推进 ----------------
+            print("   [1] 「已掌握」逐次推进间隔档位")
+            qa = new_q("连续掌握测试题")
+            make_due(qa, base)
+            check("（准备）题在今日队列里",
+                  qa in [i.question_id for i in rsvc4.list_today(db, now=base)[0]])
+
+            idx_seq, streak_seq = [], []
+            for n in range(1, threshold + 1):
+                rec = rsvc4.check(db, qa, mastery=3,
+                                  now=base + timedelta(days=n))
+                idx_seq.append(rec.interval_index)
+                streak_seq.append(rec.mastery_streak)
+                print(f"       第 {n} 次 -> interval_index={rec.interval_index} "
+                      f"连续={rec.mastery_streak} "
+                      f"下次=+{(rec.next_review_at - rec.last_review_at).days}天")
+
+            check("连续次数逐次递增 1..N",
+                  streak_seq == list(range(1, threshold + 1)), streak_seq)
+            check("**interval_index 逐档推进（不再恒为 0）**",
+                  idx_seq == [min(n, len(intervals) - 1)
+                              for n in range(1, threshold + 1)], idx_seq)
+            check("间隔档位封顶在序列末档",
+                  idx_seq[-1] == len(intervals) - 1, idx_seq[-1])
+            check("**达到阈值后题目变「已掌握」**",
+                  status_of(qa) == MASTERY_MASTERED, status_of(qa))
+
+            # ---------------- 2. 毕业后离开队列 ----------------
+            print("   [2] 毕业后不再进入复习队列")
+            later = base + timedelta(days=5000)
+            ids_after = [i.question_id for i in rsvc4.list_today(db, now=later)[0]]
+            ids_all = ids_after
+            check("**已掌握的题不在 /review/today 结果里**",
+                  qa not in ids_all, ids_all)
+            check("已掌握的题不在 backlog_question_ids 里",
+                  qa not in rsvc4.backlog_question_ids(db, now=later))
+            check("题目本身仍存在（只是不进队列）",
+                  db.get(Question, qa).deleted_at is None)
+
+            # 对照组：同样到期、但只连续 3 次（未毕业）的题必须**仍在**队列里。
+            # 没有这个对照，"不在队列里"可能只是因为队列本来就空了。
+            qz = new_q("对照组未毕业题")
+            for n in range(1, threshold):
+                rsvc4.check(db, qz, mastery=3,
+                            now=base + timedelta(days=n))
+            # 打勾会把 next_review_at 推到将来（第 3 次后是末档间隔），
+            # 所以最后再把它排到断言时刻之前，确保它"到期"。
+            make_due(qz, later)
+            ids_pair = [i.question_id for i in rsvc4.list_today(db, now=later)[0]]
+            check("（对照）未毕业的题确实在队列里", qz in ids_pair, ids_pair)
+            check("**同一队列里：毕业的不在、未毕业的在**",
+                  qa not in ids_pair and qz in ids_pair, ids_pair)
+            check("已掌握的题不计入 count_due（count 等于队列长度）",
+                  rsvc4.count_due(db, now=later) == len(ids_pair)
+                  and qa not in ids_pair,
+                  f"count={rsvc4.count_due(db, now=later)} 队列={len(ids_pair)}")
+
+            # ---------------- 3. 未完全掌握 -> 归零 ----------------
+            print("   [3] 「未完全掌握」打断 -> 连续次数归零")
+            qb = new_q("打断测试题")
+            make_due(qb, base)
+            for n in (1, 2, 3):
+                rsvc4.check(db, qb, mastery=3, now=base + timedelta(days=n))
+            mid = rsvc4.current_record(db, qb)
+            check("（准备）攒到连续 3 次", mid.mastery_streak == 3,
+                  mid.mastery_streak)
+
+            broken = rsvc4.check(db, qb, mastery=0, now=base + timedelta(days=4))
+            check("**点「未完全掌握」-> 连续次数归零**",
+                  broken.mastery_streak == 0, broken.mastery_streak)
+            check("**点「未完全掌握」-> 间隔档位回第 1 档**",
+                  broken.interval_index == 0, broken.interval_index)
+            check("未完全掌握用第 1 档间隔",
+                  (broken.next_review_at - broken.last_review_at).days
+                  == intervals[0],
+                  (broken.next_review_at - broken.last_review_at).days)
+            check("题目仍是未完全掌握（没提前毕业）",
+                  status_of(qb) == MASTERY_STILL_WRONG, status_of(qb))
+
+            for n in range(1, threshold + 1):
+                rsvc4.check(db, qb, mastery=3, now=base + timedelta(days=10 + n))
+            check("**打断后要重新连续满 N 次才毕业**",
+                  status_of(qb) == MASTERY_MASTERED, status_of(qb))
+
+            # ---------------- 4. 未表态不清零 ----------------
+            print("   [4] 主列表「打勾」（未表态）不清零进度")
+            qc = new_q("未表态测试题")
+            make_due(qc, base)
+            for n in (1, 2):
+                rsvc4.check(db, qc, mastery=3, now=base + timedelta(days=n))
+            before_streak = rsvc4.current_record(db, qc).mastery_streak
+            silent = rsvc4.check(db, qc, now=base + timedelta(days=3))
+            check("（准备）已连续 2 次", before_streak == 2, before_streak)
+            check("**未表态打勾不清零连续次数**",
+                  silent.mastery_streak == before_streak,
+                  f"{before_streak} -> {silent.mastery_streak}")
+            check("未表态仍把下次复习排在第 1 档",
+                  silent.interval_index == 0, silent.interval_index)
+
+            # ---------------- 5. 手动改回 -> 重新进队列 ----------------
+            print("   [5] 手动改回「未完全掌握」-> 重新进入队列")
+            qsvc4.set_mastery(db, qa, MASTERY_STILL_WRONG)
+            db.expire_all()
+            check("手动改回后状态是未完全掌握",
+                  db.get(Question, qa).mastery_status == MASTERY_STILL_WRONG)
+            # 当前生效那条记录的连续次数要归零；**历史记录保留原样**（审计痕迹，
+            # 与软删除一样不改写过去）。
+            now_rec = rsvc4.current_record(db, qa)
+            check("**手动改回后当前记录的连续次数归零**",
+                  now_rec.mastery_streak == 0, now_rec.mastery_streak)
+            check("手动改回后间隔档位也回第 1 档",
+                  now_rec.interval_index == 0, now_rec.interval_index)
+            make_due(qa, later)
+            ids_back = [i.question_id for i in rsvc4.list_today(db, now=later)[0]]
+            check("**手动改回后题目重新进入队列**", qa in ids_back, ids_back)
+
+        engine4.dispose()
+
 
     print("-" * 80)
     failed = [r for r in results if not r[1]]

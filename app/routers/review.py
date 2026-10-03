@@ -96,7 +96,10 @@ def check(
     """打勾。
 
     不校验是否处于待复习状态；允许重复打勾，**不返回 409**（AGENTS.md 4.1）。
-    interval_index 重置为 0，next_review_at = now() + INTERVALS[0]（默认 3 天）。
+
+    返回的记录里 `mastery_streak` 是"已连续达到「已掌握」的次数"，
+    前端用它显示"还差几次毕业"（requirements 2.14）。连续次数攒够
+    （= 间隔序列阶段数）时，题目会被标记为「已掌握」并退出复习队列。
     """
     mastery = payload.resolved_mastery if payload is not None else None
     try:

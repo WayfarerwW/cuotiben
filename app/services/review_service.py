@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from ..models import Folder, Question, QuestionImage, ReviewRecord, Tag
 from ..models.base import utcnow
+from ..models.questions import MASTERY_MASTERED
 from . import settings_service
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,12 @@ TIMEZONE_ENV = "CUOTIBEN_TIMEZONE"
 
 # 逾期 >= 该天数折叠到"积压区"（requirements.md 2.9）
 BACKLOG_DAYS = 14
+
+# 打勾评价（requirements.md 2.14）：界面只给 2 档。
+# 数据库里仍可能有历史遗留的 1/2，统一按"未完全掌握"处理。
+MASTERY_LEVEL_NOT_MASTERED = 0      # 未完全掌握
+MASTERY_LEVEL_MASTERED = 3          # 已掌握
+MASTERY_STREAK_THRESHOLD = 4        # 连续几次「已掌握」即毕业（阶段数不足时兜底）
 
 
 class ReviewError(Exception):
@@ -64,6 +71,10 @@ class ReviewItem:
     overdue_days: int = 0
     is_backlog: bool = False
     is_overdue: bool = False
+    #: 已连续达到「已掌握」的次数（0..阶段数）。界面用它显示"还差几次毕业"。
+    mastery_streak: int = 0
+    #: 连续几次即毕业（= 间隔序列阶段数），前端显示分母用。
+    mastery_threshold: int = MASTERY_STREAK_THRESHOLD
 
 
 # --------------------------------------------------------------------------
@@ -151,20 +162,43 @@ def current_record(db: Session, question_id: int) -> ReviewRecord | None:
     ).one_or_none()
 
 
-def _resolve_interval_index(mastery: int | None) -> int:
-    """打勾后的 interval_index。
+def _resolve_interval_index(
+    mastery: int | None, previous_streak: int, intervals: list[int]
+) -> tuple[int, int]:
+    """打勾后的 (interval_index, mastery_streak)。
 
-    这是需求文档内部的一个取舍点：
-      - 5.2「打勾（随时可打，重置阶段）」写死 `new_interval_index = 0`，
-        AGENTS.md 4.1 也规定"打勾后 interval_index 重置为 0"。
-      - 5.1「推进」规则（mastery 1 维持 / 2 +1 / 3 +2）是"按掌握程度推进阶段"。
-      - 2.11 把两者描述为"两种模式（择一）"：简单模式=重置到 0；
-        精细模式=按掌握程度决定阶段。
+    这是需求文档里曾经的自相矛盾点，现在是明确的（requirements 2.14 / 5.1）：
 
-    当前取 5.2 / 4.1 的口径：**总是重置为 0**；mastery 仍照常写入
-    mastery_level 供统计与将来启用精细模式使用。要切精细模式，只改本函数。
+      - 5.1「推进」：按掌握程度推进阶段
+      - 2.14：连续 N 次「已掌握」即毕业（N = 间隔序列的阶段数）
+
+    规则（2026-10 用户确认）：
+
+      - `mastery == MASTERY_LEVEL_MASTERED`（已掌握）
+            streak += 1；interval_index = min(streak, 阶段数-1)
+            即按时长递增：第 1 档 -> 第 2 档 -> … -> 末档
+      - `mastery == MASTERY_LEVEL_NOT_MASTERED`（未完全掌握）
+            streak = 0；interval_index = 0
+            没掌握的题**尽快重做**，不该被拖到后面的长间隔
+      - `mastery is None`（未表态，例如题目列表的「打勾」按钮）
+            streak **保持不变**；interval_index = 0
+            刻意不清零：用户在列表里随手打个勾，不该把复习页辛苦攒的
+            连续进度抹掉（那是个很容易踩的坑）
+
+    返回 (interval_index, streak)，streak 封顶在阶段数（达到即毕业）。
     """
-    return 0
+    threshold = len(intervals) or MASTERY_STREAK_THRESHOLD
+    last_index = max(len(intervals) - 1, 0)
+
+    if mastery == MASTERY_LEVEL_MASTERED:
+        streak = min(previous_streak + 1, threshold)
+        return min(streak, last_index), streak
+
+    if mastery is None:
+        return 0, previous_streak
+
+    # 未完全掌握，以及历史遗留的 1/2 档 —— 都按"没掌握"处理
+    return 0, 0
 
 
 # --------------------------------------------------------------------------
@@ -183,6 +217,29 @@ def _get_question(db: Session, question_id: int) -> Question:
     return question
 
 
+def reset_mastery_progress(
+    db: Session, question_id: int, *, now: datetime | None = None
+) -> ReviewRecord | None:
+    """把该题**当前生效那条**记录的连续掌握进度清掉并重排到第 1 档。
+
+    什么时候用：用户手动把题目改回「未完全掌握」时（`question_service.set_mastery`）。
+    不重排的话会出问题 —— 毕业那次打勾已经把 next_review_at 推到**末档**
+    （比如 30 天后），只把状态改回「未完全掌握」并不能让它尽快回到复习队列，
+    与"这题我还没掌握，要再练"的预期不符。
+
+    只动当前生效那条；**历史记录保持原样**（审计痕迹，与软删除一样不改写过去）。
+
+    不 commit，由调用方控制事务边界（要和题目状态一起提交）。
+    """
+    record = current_record(db, question_id)
+    if record is None:
+        return None
+    record.mastery_streak = 0
+    record.interval_index = 0
+    record.next_review_at = settings_service.first_review_at(db, now=now)
+    return record
+
+
 def check(
     db: Session,
     question_id: int,
@@ -193,8 +250,16 @@ def check(
 ) -> ReviewRecord:
     """打勾：任何题、任何时间都能打，不校验待复习状态，允许重复打。
 
-    每次打勾**新增一条** review_record（不改旧记录），interval_index 重置为 0，
-    next_review_at = now() + INTERVALS[0]，review_count 在上一轮基础上 +1。
+    每次打勾**新增一条** review_record（不改旧记录），review_count 在上一轮
+    基础上 +1。间隔与"连续掌握次数"按 `_resolve_interval_index` 的规则推进：
+
+      - 已掌握(3)      -> 连续次数 +1，间隔逐档拉长
+      - 未完全掌握(0)  -> 连续次数归零，间隔回第 1 档（尽快重做）
+      - 未表态(None)   -> 连续次数不变，间隔回第 1 档
+
+    **连续次数达到间隔序列的阶段数时，题目标记为「已掌握」并退出复习队列**
+    （requirements 2.14）。已掌握的题不再出现在 list_today / count_due /
+    backlog 里 —— 过滤在 `_due_rows` 一处完成。
 
     若该题当前记录已逾期（next_review_at 早于本地今日 0 点），本次打勾记为补卡
     （is_backfill=True），供"今日补卡数量 / 连续补卡天数"统计使用。
@@ -204,7 +269,8 @@ def check(
 
     previous = current_record(db, question_id)
     intervals = settings_service.get_intervals(db)
-    index = _resolve_interval_index(mastery)
+    previous_streak = previous.mastery_streak if previous is not None else 0
+    index, streak = _resolve_interval_index(mastery, previous_streak, intervals)
 
     day_start, _day_end = today_bounds(moment, tz)
     was_overdue = (
@@ -220,9 +286,20 @@ def check(
         last_review_at=moment,
         next_review_at=moment + timedelta(days=intervals[index]),
         mastery_level=mastery if mastery is not None else 0,
+        mastery_streak=streak,
         is_backfill=was_overdue,
     )
     db.add(record)
+
+    # 连续攒够阶段数 -> 毕业：题目变「已掌握」，此后不进入复习队列。
+    # 与记录写在同一个事务里，避免"记录说毕业了、题目状态还没改"的中间态。
+    if streak >= len(intervals):
+        question = db.get(Question, question_id)
+        if question is not None and question.mastery_status != MASTERY_MASTERED:
+            question.mastery_status = MASTERY_MASTERED
+            logger.info("题目 %s 连续 %d 次已掌握，标记为已掌握（退出复习队列）",
+                        question_id, streak)
+
     db.commit()
     db.refresh(record)
     return record
@@ -256,6 +333,11 @@ def _due_rows(db: Session, *, until: datetime) -> list[tuple[Question, ReviewRec
     一题可能有多条历史记录，只有最新那条未删除的算数：用 row_number()
     一次挑出每题最新记录，避免逐题查询（列表页会 N+1）。
     返回的 ReviewRecord 是承载最新记录字段的轻量对象（不作为持久化实体使用）。
+
+    **已掌握的题被排除**（requirements 2.14：连续 N 次已掌握即毕业）。
+    这里是"毕业就不再出现"的**唯一开关** —— list_today / count_due /
+    backlog_question_ids / reset_backlog / 导出 review_queue 全部经由本函数，
+    所以只在这一处过滤，口径必然一致。
     """
     ranked = (
         select(
@@ -263,6 +345,7 @@ def _due_rows(db: Session, *, until: datetime) -> list[tuple[Question, ReviewRec
             ReviewRecord.interval_index.label("idx"),
             ReviewRecord.next_review_at.label("next_at"),
             ReviewRecord.mastery_level.label("level"),
+            ReviewRecord.mastery_streak.label("streak"),
             func.row_number()
             .over(
                 partition_by=ReviewRecord.question_id,
@@ -275,20 +358,23 @@ def _due_rows(db: Session, *, until: datetime) -> list[tuple[Question, ReviewRec
     )
 
     stmt: Select = (
-        select(Question, ranked.c.idx, ranked.c.next_at, ranked.c.level)
+        select(Question, ranked.c.idx, ranked.c.next_at, ranked.c.level,
+               ranked.c.streak)
         .join(ranked, ranked.c.qid == Question.id)
         .where(
             ranked.c.rn == 1,
             ranked.c.next_at.is_not(None),
             ranked.c.next_at <= until,
             Question.deleted_at.is_(None),
+            # 毕业的题不再进入任何"待复习"口径（requirements 2.14）
+            Question.mastery_status != MASTERY_MASTERED,
         )
         .options(selectinload(Question.tags), selectinload(Question.images))
         .order_by(ranked.c.next_at)
     )
 
     out: list[tuple[Question, ReviewRecord]] = []
-    for question, idx, next_at, level in db.execute(stmt).all():
+    for question, idx, next_at, level, streak in db.execute(stmt).all():
         out.append((
             question,
             ReviewRecord(
@@ -296,6 +382,7 @@ def _due_rows(db: Session, *, until: datetime) -> list[tuple[Question, ReviewRec
                 interval_index=idx,
                 next_review_at=next_at,
                 mastery_level=level,
+                mastery_streak=streak,
             ),
         ))
     return out
@@ -315,6 +402,7 @@ def _build_items(
         )
 
     items: list[ReviewItem] = []
+    threshold = len(settings_service.get_intervals(db)) or MASTERY_STREAK_THRESHOLD
     for question, record in rows:
         next_at = record.next_review_at
         overdue_days = 0
@@ -336,6 +424,8 @@ def _build_items(
                 overdue_days=overdue_days,
                 is_backlog=overdue_days >= BACKLOG_DAYS,
                 is_overdue=overdue_days > 0,
+                mastery_streak=record.mastery_streak or 0,
+                mastery_threshold=threshold,
             )
         )
     return items

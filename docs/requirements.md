@@ -56,11 +56,11 @@
 | 图片压缩 | 统一宽度 1080px，JPEG q75 |
 | 草稿保护 | localStorage 自动保存，防丢失 |
 | 复习通知 | 铃铛红点、今日待复习、面板内直接复习 |
-| 记忆曲线 | 间隔递增，打勾后重置阶段 |
-| 复习打勾 | 随时可打，打勾重置 interval_index=0 |
+| 记忆曲线 | 间隔递增，按打勾评价逐档推进 |
+| 复习打勾 | 随时可打，评价 2 档；连续 N 次「已掌握」即毕业 |
 | 补卡机制 | 分批补卡 + 一键重置积压 |
 | 重点标记 | 星标重点，优先级排序 |
-| 错题正误状态 | 仍易错 / 已拿下 |
+| 错题正误状态 | 未完全掌握 / 已掌握（连续 N 次已掌握即毕业） |
 | 记事本 | 轻量笔记，支持搜索 |
 | PDF 导出 | 按范围导出，含答案可选 |
 | 数据说明 | 说明本机存储位置 |
@@ -202,13 +202,8 @@ text
 - 待复习判断 `next_review_at <= now()`，服务端计算
 - 所有 datetime 用 `DateTime(timezone=True)`，API 用 ISO 8601 带时区
 
-推进规则（精细模式）：
-| 选择 | 动作 |
-|---|---|
-| 完全不会 | interval_index 归零 |
-| 模糊 | 维持当前 |
-| 基本掌握 | +1 |
-| 已掌握 | +2 或直接到 30 天 |
+推进规则：见 **5.1**（按打勾评价逐档推进；评价为 2 档：
+未完全掌握 / 已掌握）。**连续 N 次「已掌握」即毕业**，N = 设置页间隔序列的阶段数。
 
 ### 2.11 复习打勾（核心规则）
 
@@ -252,17 +247,46 @@ text
 - 支持"只看重点"筛选
 - 今日列表中重点题优先排序
 
-### 2.14 错题正误状态
+### 2.14 错题正误状态与毕业机制
 
-- 字段 `mastery_status`：`still_wrong`（默认）/ `mastered`
+- 字段 `mastery_status`：`still_wrong`（默认，界面「**未完全掌握**」）/
+  `mastered`（界面「**已掌握**」）
+- 界面文案统一为「未完全掌握 / 已掌握」（此前「已拿下」与「已掌握」混用）
 - 与重点星标互补、独立
 - 两个维度可组合：
-  - 重点 + 仍易错：最高优先级
-  - 重点 + 已拿下：重要但已掌握，降频
-  - 非重点 + 仍易错：普通错题
-  - 非重点 + 已拿下：可归档
+  - 重点 + 未完全掌握：最高优先级
+  - 重点 + 已掌握：重要但已掌握，不再复习
+  - 非重点 + 未完全掌握：普通错题
+  - 非重点 + 已掌握：可归档
 - 支持按正误筛选
-- 标记"已拿下"可拉长复习间隔
+
+#### 打勾评价：**2 档**
+
+打勾时给这次复习打分（`review_records.mastery_level`）：
+
+| 取值 | 文案 | 效果 |
+|---|---|---|
+| `0` | **未完全掌握** | 连续次数归零；间隔回第 1 档（尽快重做） |
+| `3` | **已掌握** | 连续次数 +1；间隔逐档拉长 |
+| 不传 | （未表态） | 连续次数**不变**；间隔回第 1 档 |
+
+- 取值用 `0`/`3` 而非 `0`/`1`：老数据里已有 `mastery_level=3` 表示"已掌握"，
+  沿用即无需迁移。
+- `1`/`2` 是历史档位，界面不再产生；若传入或读到，一律按"未完全掌握"处理。
+- **不传 = 未表态**（题目管理列表的「打勾」按钮走这条）。刻意不清零：
+  在列表里随手打个勾不该抹掉复习页辛苦攒的连续进度。
+
+#### 连续 N 次「已掌握」即毕业
+
+- **N = 设置页「记忆曲线间隔序列」的阶段数**（默认 4，即 `[3, 7, 15, 30]`）。
+  改阶段数即改毕业门槛，两者天然联动。
+- 连续达到 N 次时，题目标记为 `mastered`，此后**不再进入复习队列**。
+- **必须连续**：中间点一次「未完全掌握」就归零，要重新连续攒够 N 次。
+- 已掌握的题：不在 `/review/today`、不计入 `/review/count`、不参与积压重置、
+  不出现在导出 PDF 的"今日复习"范围里；但**仍在题目管理列表可见、可筛选、可导出**。
+- 手动把状态改回「未完全掌握」= 逃生通道：重新进队列，连续次数归零，
+  间隔回第 1 档，需重新攒够 N 次。
+- 历史复习记录里的连续次数**不改写**（审计痕迹，与软删除同理）。
 
 ### 2.15 记事本
 
@@ -847,25 +871,51 @@ Token **不写入 `.git/config`**：推送时通过 `GIT_ASKPASS` 临时注入�
 
 5. 关键逻辑
 5.1 记忆曲线
-text
-INTERVALS = [3, 7, 15, 30]
 
-推进(record, mastery):
-    if mastery == 0: interval_index = 0
-    elif mastery == 1: 维持
-    elif mastery == 2: +1
-    elif mastery == 3: +2
-    record.next_review_at = now() + INTERVALS[interval_index]
-5.2 打勾（随时可打，重置阶段）
+INTERVALS 是**间隔天数表**，不是"复习次数上限"。具体天数由用户在设置页
+「记忆曲线间隔序列」里配置（必须严格递增、正整数）；下面的 N 就是它的**阶段数**。
+
+text
+INTERVALS = 用户在设置页配置的间隔天数序列，例如 [3, 7, 15, 30]
+N = len(INTERVALS)        # 毕业阈值：连续 N 次「已掌握」即毕业
+
+推进(previous_streak, mastery):
+    if mastery == 3:                       # 已掌握
+        streak = min(previous_streak + 1, N)
+        interval_index = min(streak, N - 1)     # 3天 -> 7天 -> … -> 末档
+    elif mastery == 0:                     # 未完全掌握
+        streak = 0
+        interval_index = 0                 # 没掌握就尽快重做，不拖到长间隔
+    else:                                  # 不传 = 未表态
+        streak = previous_streak           # 不变（不清零）
+        interval_index = 0
+
+    next_review_at = now() + INTERVALS[interval_index]
+
+    if streak >= N:
+        question.mastery_status = mastered      # 毕业，退出复习队列
+
+> 为什么不写死天数：间隔天数属于用户设置，需求只定义规则。
+> 为什么"未完全掌握"回第 1 档而不是末档：这类题应当尽快重做。
+
+5.2 打勾（随时可打）
+
 text
 打勾(question_id, mastery=None):
-    # 不校验待复习状态
-    new_interval_index = 0
+    # 不校验待复习状态；允许重复打勾，不返回 409
+    previous = 当前生效的 review_record（未软删除的最新一条）
+    interval_index, streak = 推进(previous.mastery_streak, mastery)
     新建 review_record(
-        interval_index = new_interval_index,
-        next_review_at = now() + INTERVALS[0],
-        mastery_level = mastery or 0
+        interval_index = interval_index,
+        mastery_level  = mastery or 0,
+        mastery_streak = streak,
+        next_review_at = now() + INTERVALS[interval_index]
     )
+    # 同一事务内完成毕业判定，避免"记录说毕业了、题目状态还没改"的中间态
+
+毕业的题在 `_due_rows` 一处被排除，因此 /review/today、/review/count、
+积压统计、导出"今日复习"范围的口径必然一致（见 2.14）。
+
 5.3 撤销打勾
 软删除最近一条 review_record，上一轮自动生效。
 
@@ -990,7 +1040,7 @@ cuotiben/
 
 可标记/取消重点，可按重点筛选
 
-可切换"仍易错 / 已拿下"，可按此筛选
+可切换"未完全掌握 / 已掌握"，可按此筛选；连续 N 次「已掌握」自动毕业
 
 记事本增删查改与搜索
 

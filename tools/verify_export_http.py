@@ -333,6 +333,95 @@ def main() -> int:
             expect("**引用了不存在的图片时导出仍返回 200**",
                    st == 200, f"HTTP {st} {body[:160]}")
 
+        # ---------------------------------------------------------------
+        section("打勾评价 2 档 + 连续 4 次毕业（真实 HTTP，requirements 2.14）")
+        st, _h, body = call("POST", "/questions", {
+            "folder_id": subj, "stem": "毕业机制 HTTP 测试题", "answer": "答案",
+            "tags": [], "sort_order": 101,
+        })
+        gq = json.loads(body)["id"] if st in (200, 201) else None
+        expect("造出用于毕业测试的题", gq is not None, f"{st} {body[:140]}")
+
+        if gq is not None:
+            # 间隔序列的阶段数就是毕业阈值
+            st, _h, body = call("GET", "/settings")
+            intervals = json.loads(body).get("intervals") or [3, 7, 15, 30] \
+                if st == 200 else [3, 7, 15, 30]
+            threshold = len(intervals)
+            expect("从 /settings 读到间隔序列（阈值 = 阶段数）",
+                   isinstance(intervals, list) and len(intervals) >= 1,
+                   intervals)
+
+            # 先让它到期，才能进入今日队列
+            st, _h, body = call("GET", "/review/today")
+            expect("GET /review/today 返回 200", st == 200, f"HTTP {st}")
+
+            idx_seq: list[int] = []
+            streak_seq: list[int] = []
+            for n in range(1, threshold + 1):
+                st, _h, body = call("POST", f"/review/{gq}/check",
+                                    {"mastery": 3})
+                if st != 200:
+                    break
+                rec = json.loads(body)
+                idx_seq.append(rec["interval_index"])
+                streak_seq.append(rec["mastery_streak"])
+            expect("打勾 3 档（已掌握）每次返回 200",
+                   len(streak_seq) == threshold, f"{streak_seq}")
+            expect("**连续次数逐次递增到阈值**",
+                   streak_seq == list(range(1, threshold + 1)), streak_seq)
+            expect("**interval_index 逐档推进（不再恒 0）**",
+                   idx_seq == [min(n, len(intervals) - 1)
+                               for n in range(1, threshold + 1)], idx_seq)
+
+            st, _h, body = call("GET", f"/questions/{gq}")
+            status = json.loads(body).get("mastery_status") if st == 200 else None
+            expect("**连续满阈值后题目变 mastered**", status == "mastered", status)
+
+            # 毕业的题不再出现在今日队列
+            st, _h, body = call("GET", "/review/today")
+            ids = [i["question_id"] for i in json.loads(body)] if st == 200 else []
+            expect("**已掌握的题不在 /review/today 里**", gq not in ids, ids)
+
+            # 手动改回 -> 重新可复习（逃生通道）
+            st, _h, body = call("POST", f"/questions/{gq}/mastery",
+                                {"mastery_status": "still_wrong"})
+            expect("手动改回未完全掌握返回 200", st == 200, f"HTTP {st}")
+            st, _h, body = call("GET", f"/questions/{gq}")
+            expect("手动改回后状态是 still_wrong",
+                   json.loads(body).get("mastery_status") == "still_wrong")
+
+            # 改回后**未表态**打勾：连续次数应保持 0（既不清零也不加分）
+            st, _h, body = call("POST", f"/review/{gq}/check")
+            expect("**改回后未表态打勾：连续次数保持 0**",
+                   st == 200 and json.loads(body)["mastery_streak"] == 0,
+                   f"HTTP {st} {body[:120]}")
+
+            # 改回后**明确选已掌握**：连续次数从 1 重新开始
+            st, _h, body = call("POST", f"/review/{gq}/check", {"mastery": 3})
+            expect("**手动改回后再选已掌握，连续次数从 1 重新开始**",
+                   st == 200 and json.loads(body)["mastery_streak"] == 1,
+                   f"HTTP {st} {body[:140]}")
+            expect("重新开始时 interval_index 回第 2 档（连续 1 次）",
+                   st == 200 and json.loads(body)["interval_index"] == 1,
+                   f"HTTP {st} {body[:140]}")
+
+            # 未完全掌握 -> 归零
+            call("POST", f"/review/{gq}/check", {"mastery": 3})
+            st, _h, body = call("POST", f"/review/{gq}/check", {"mastery": 0})
+            expect("**点「未完全掌握」-> 连续次数归零**",
+                   st == 200 and json.loads(body)["mastery_streak"] == 0,
+                   f"HTTP {st} {body[:120]}")
+            expect("未完全掌握 -> interval_index 回第 1 档",
+                   st == 200 and json.loads(body)["interval_index"] == 0)
+
+            # 未表态（主列表打勾）不清零
+            call("POST", f"/review/{gq}/check", {"mastery": 3})
+            st, _h, body = call("POST", f"/review/{gq}/check")
+            expect("**未表态打勾不清零连续次数**",
+                   st == 200 and json.loads(body)["mastery_streak"] == 1,
+                   f"HTTP {st} {body[:120]}")
+
         print("\n" + "-" * 74)
         print(f"合计 {OK + FAIL} 项，通过 {OK}，失败 {FAIL}")
         for name in FAILED:

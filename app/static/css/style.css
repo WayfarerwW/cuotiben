@@ -1713,6 +1713,15 @@ textarea.input {
   border-top: 1px solid var(--c-border-light);
 }
 
+/* 毕业进度提示（requirements 2.14）：连续点满 N 次「已掌握」即毕业。
+   只在已经攒了进度时显示，避免每题都多一行字。
+   文字用 --c-*-text 系 token（AGENTS 3.2：语义色当文字用要换 token）。 */
+.review-card__streak {
+  margin-top: var(--sp-tight);
+  font-size: var(--fs-aux);
+  color: var(--c-success-text);
+}
+
 /* --- 记事本：左右分栏（ui-design 4.4）--- */
 .notes-layout {
   display: grid;

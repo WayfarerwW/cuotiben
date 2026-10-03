@@ -459,7 +459,7 @@
               <p class="stat-card__value num">{{ stats.mastered }}</p>
             </article>
             <article class="card card--hoverable">
-              <p class="stat-card__label">仍易错</p>
+              <p class="stat-card__label">未完全掌握</p>
               <p class="stat-card__value num">{{ stats.wrong }}</p>
             </article>
           </section>
@@ -609,7 +609,7 @@
                     <span class="status"
                           :class="q.mastery_status === 'mastered' ? 'status--won' : 'status--wrong'">
                       <span class="status__dot"></span>
-                      {{ q.mastery_status === 'mastered' ? '已拿下' : '仍易错' }}
+                      {{ q.mastery_status === 'mastered' ? '已掌握' : '未完全掌握' }}
                     </span>
                   </td>
                   <td :data-label="'更新时间'" class="text-aux num">{{ fmtDate(q.updated_at) }}</td>
@@ -700,6 +700,13 @@
                   {{ item.answer || '（未填写答案）' }}
                 </p>
               </transition>
+
+              <!-- 毕业进度（requirements 2.14）：连续点满 N 次「已掌握」即毕业。
+                   N = 设置页里间隔序列的阶段数，由后端 mastery_threshold 下发。 -->
+              <p v-if="item.mastery_streak > 0" class="review-card__streak">
+                已连续掌握 {{ item.mastery_streak }} / {{ item.mastery_threshold }} 次，
+                再 {{ item.mastery_threshold - item.mastery_streak }} 次即视为已掌握
+              </p>
 
               <div class="review-card__actions">
                 <button v-for="c in masteryChoices" :key="c.value" type="button"
@@ -1331,7 +1338,7 @@
                   :class="questionDetail.question.mastery_status === 'mastered'
                     ? 'status--won' : 'status--wrong'">
               <span class="status__dot"></span>
-              {{ questionDetail.question.mastery_status === 'mastered' ? '已拿下' : '仍易错' }}
+              {{ questionDetail.question.mastery_status === 'mastered' ? '已掌握' : '未完全掌握' }}
             </span>
             <span v-for="t in questionDetail.question.tags" :key="t.id"
                   class="tag">{{ t.name }}</span>

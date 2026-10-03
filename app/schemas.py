@@ -354,16 +354,25 @@ class ReviewRecordOut(OrmBase):
     last_review_at: datetime | None
     next_review_at: datetime | None
     mastery_level: int
+    #: 已连续达到「已掌握」的次数（requirements 2.14）
+    mastery_streak: int = 0
     created_at: datetime
     deleted_at: datetime | None
 
 
 class ReviewCheckRequest(BaseModel):
-    """POST /review/{question_id}/check —— 打勾（requirements.md 2.11）。
+    """POST /review/{question_id}/check —— 打勾（requirements.md 2.11 / 2.14）。
 
     不校验是否处于待复习状态；允许重复打勾，不返回 409。
-    mastery 只在精细模式（现未启用）下影响阶段推进，见
-    services/review_service.py 的 `_resolve_interval_index`。
+
+    打勾评价界面只给 **2 档**（requirements 2.14）：
+
+    - `0` 未完全掌握 —— 连续次数归零，间隔回第 1 档
+    - `3` 已掌握 —— 连续次数 +1，间隔逐档拉长；连续满 N 次即毕业
+    - 不传（`None`）—— 未表态：连续次数不变，间隔回第 1 档
+      （题目列表那个「打勾」按钮走这条，不该清掉复习页攒的进度）
+
+    `1` / `2` 是历史取值，仍被接受（老数据里有），语义按"未完全掌握"处理。
     """
 
     model_config = ConfigDict(populate_by_name=True)
@@ -411,6 +420,9 @@ class ReviewItemOut(OrmBase):
     # 逾期 >=14 天折叠到积压区
     is_backlog: bool = False
     is_overdue: bool = False
+    #: 已连续达到「已掌握」的次数 / 毕业所需次数 —— 界面显示"还差几次"
+    mastery_streak: int = 0
+    mastery_threshold: int = 4
 
 
 class ReviewCountOut(BaseModel):

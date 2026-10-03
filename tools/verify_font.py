@@ -66,9 +66,9 @@ SAMPLE = """<!doctype html><html><head><meta charset="utf-8">
 <h2>4. 表格（题干/答案排版用）</h2>
 <table>
 <tr><th>知识点</th><th>易错点</th><th>状态</th></tr>
-<tr><td>洛必达法则</td><td>仅适用于 0/0 或 ∞/∞ 型</td><td>仍易错</td></tr>
-<tr><td>等价无穷小替换</td><td>加减法中不可直接替换</td><td>已拿下</td></tr>
-<tr><td>定积分换元</td><td>上下限必须同步换元</td><td>仍易错</td></tr>
+<tr><td>洛必达法则</td><td>仅适用于 0/0 或 ∞/∞ 型</td><td>未完全掌握</td></tr>
+<tr><td>等价无穷小替换</td><td>加减法中不可直接替换</td><td>已掌握</td></tr>
+<tr><td>定积分换元</td><td>上下限必须同步换元</td><td>未完全掌握</td></tr>
 </table>
 
 <h2>5. 粗体与字号</h2>

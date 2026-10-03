@@ -52,7 +52,7 @@
   /** 草稿恢复提示条自动收起时间（ui-design 6.2：5s 后自动收起）。 */
   var DRAFT_PROMPT_MS = 5000;
 
-  var MASTERY_LABEL = { still_wrong: '仍易错', mastered: '已拿下' };
+  var MASTERY_LABEL = { still_wrong: '未完全掌握', mastered: '已掌握' };
 
   var NAV_ITEMS = [
     { key: 'home', label: '首页', icon: 'i-home' },
@@ -75,13 +75,21 @@
 
   var VALID_PAGES = Object.keys(PAGE_TITLES);
 
-  /** 打勾时可选的四档掌握程度（ui-design 4.3）。 */
+  /**
+   * 打勾评价：**2 档**（requirements 2.14）。
+   *
+   * 取值用 0 / 3 而不是 0 / 1：数据库里已有历史数据用 3 表示"已掌握"
+   * （mastery_level 分布是 {0:33, 1:1, 3:2}），沿用 3 就不必迁移老数据。
+   *
+   * 1/2 是历史档位，界面不再产生；若老数据里出现，一律按"未完全掌握"处理。
+   */
   var MASTERY_CHOICES = [
-    { value: 0, label: '完全不会' },
-    { value: 1, label: '有点模糊' },
-    { value: 2, label: '基本掌握' },
+    { value: 0, label: '未完全掌握' },
     { value: 3, label: '已掌握' },
   ];
+
+  /** 连续几次「已掌握」即毕业。真实阈值来自后端 mastery_threshold（= 间隔阶段数）。 */
+  var MASTERY_THRESHOLD_FALLBACK = 4;
 
   /* ======================================================================
    * 工具
@@ -181,7 +189,7 @@
       var filterOptions = [
         { value: 'all', label: '全部' },
         { value: 'starred', label: '重点' },
-        { value: 'wrong', label: '仍易错' },
+        { value: 'wrong', label: '未完全掌握' },
         { value: 'mastered', label: '已掌握' },
       ];
 
@@ -1195,6 +1203,9 @@
         // 先把这条队列项留一份：撤销时要用它把题放回原处。
         // 不能撤销时再去问后端要 —— 后端只返回 MessageOut，没有队列项结构。
         var snapshot = item;
+        var threshold = item.mastery_threshold || MASTERY_THRESHOLD_FALLBACK;
+        // 本轮之前的连续次数：用来判断"这一勾是不是让它毕业了"
+        var streakBefore = item.mastery_streak || 0;
         return API.checkReview(id, mastery)
           .then(function (record) {
             reviewDoneToday.value += 1;
@@ -1205,11 +1216,19 @@
             // 注意：这里曾经写成 arguments[0]，但那是**回调自己**的 arguments，
             // 结果 next_review_at 永远是 undefined、Toast 显示 "—"。
             var next = record && record.next_review_at ? fmtDate(record.next_review_at) : '—';
-            toast('已打勾，下次复习：' + next, 'success', false, {
+            var streak = (record && record.mastery_streak != null)
+              ? record.mastery_streak : streakBefore;
+            // 毕业后题目已退出复习队列，文案要说清楚，否则用户会以为"漏了一题"
+            var graduated = !!record && streak >= threshold;
+            var msg = graduated
+              ? '已掌握，这道题不再出现在复习队列'
+              : ('已打勾，下次复习：' + next
+                 + (streak > 0 ? ('（已连续掌握 ' + streak + '/' + threshold + ' 次）') : ''));
+            toast(msg, 'success', false, {
               label: '撤销',
               handler: function () { undoCheck(id, snapshot); },
             });
-            announce('已打勾，下次复习 ' + next);
+            announce(msg);
             recomputeStats();
             if (options.flashId) { flashRow(options.flashId); }
             return loadFolderTree();
